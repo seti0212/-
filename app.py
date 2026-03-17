@@ -12,21 +12,18 @@ from crewai import Agent, Task, Crew, LLM
 from crewai_tools import SerperDevTool
 
 # ============================================================================
-# 1. 환경 및 보안 설정 (2026년 최신 모델 규격 적용)
+# 1. 환경 및 보안 설정
 # ============================================================================
 st.set_page_config(page_title="구매지원팀 통합 분석 시스템 (Gemini)", layout="wide")
 
-# [보안] Streamlit Secrets에서 API 키 로드
 if "GEMINI_API_KEY" in st.secrets:
     api_key = st.secrets["GEMINI_API_KEY"]
     os.environ["GEMINI_API_KEY"] = api_key
-    # 일부 라이브러리 호환성을 위해 GOOGLE_API_KEY도 동일하게 설정
     os.environ["GOOGLE_API_KEY"] = api_key 
     os.environ["SERPER_API_KEY"] = st.secrets.get("SERPER_API_KEY", "")
 else:
-    st.error("⚠️ API 키가 설정되지 않았습니다. Streamlit Cloud의 Secrets 설정을 완료해 주세요.")
+    st.error("⚠️ Streamlit Cloud의 Secrets 설정을 완료해 주세요.")
 
-# 데이터 소스
 url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vST3eDNhF1GLc231d4RdAnSCb8DnSznnZ4lJfPxxmtIHIcuEXbvFmrBI9LRdbURog-ik09vSOHTOAMp/pub?output=csv"
 
 @st.cache_data(ttl=600)
@@ -60,21 +57,19 @@ def markdown_to_docx_stream(markdown_text):
 df_raw = load_data()
 
 # ============================================================================
-# 2. 통계 계산 및 핵심 이슈 품목 추출
+# 2. 통계 계산 및 전체 이슈 품목 추출
 # ============================================================================
 def calculate_all_stats(df):
     df = df.copy()
     df['연주'] = df['날짜'].dt.to_period('W').astype(str)
     df['연월'] = df['날짜'].dt.to_period('M').astype(str)
     df['연도'] = df['날짜'].dt.year
-
     def get_stats(df_group, col_name):
         grouped = df_group.groupby(['품목', '단위', col_name])['y'].mean().reset_index()
         grouped.columns = ['품목', '단위', '기간', '평균시세']
         grouped['이전시세'] = grouped.groupby('품목')['평균시세'].shift(1)
         grouped['증감률'] = ((grouped['평균시세'] - grouped['이전시세']) / grouped['이전시세'] * 100).round(2)
         return grouped.fillna(0)
-
     return get_stats(df, '연주'), get_stats(df, '연월'), get_stats(df, '연도')
 
 def get_critical_items(w_df, m_df, y_df):
@@ -84,96 +79,84 @@ def get_critical_items(w_df, m_df, y_df):
     m_bot = m_df[m_df['기간'] == m_df['기간'].max()].nsmallest(5, '증감률')['품목'].tolist()
     y_top = y_df[y_df['기간'] == y_df['기간'].max()].nlargest(5, '증감률')['품목'].tolist()
     y_bot = y_df[y_df['기간'] == y_df['기간'].max()].nsmallest(5, '증감률')['품목'].tolist()
-    combined = list(set(w_top + w_bot + m_top + m_bot + y_top + y_bot))
-    return combined
+    return list(set(w_top + w_bot + m_top + m_bot + y_top + y_bot))
 
 # ============================================================================
 # 3. 메인 대시보드 (기존 3x3 레이아웃)
 # ============================================================================
 if df_raw is not None:
     weekly_df, monthly_df, yearly_df = calculate_all_stats(df_raw)
-
     st.title("📊 원자재 시세 실시간 분석 및 전문 AI 보고서")
     st.info(f"데이터 업데이트 시각: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-
     display_cols = ['품목', '평균시세', '단위', '증감률']
-    def format_df(df):
-        return df[display_cols].style.format({'평균시세': '{:,.2f}', '증감률': '{:+.2f}%'})
+    def format_df(df): return df[display_cols].style.format({'평균시세': '{:,.2f}', '증감률': '{:+.2f}%'})
 
-    for section_title, func_name in [("🔍 기간별 전체 시세 현황", None), ("📈 가격 상승 TOP 5", "nlargest"), ("📉 가격 하락 TOP 5", "nsmallest")]:
-        st.header(section_title)
+    for title, func in [("🔍 기간별 전체 시세 현황", None), ("📈 가격 상승 TOP 5", "nlargest"), ("📉 가격 하락 TOP 5", "nsmallest")]:
+        st.header(title)
         c1, c2, c3 = st.columns(3)
-        for col, data, period_name in zip([c1, c2, c3], [weekly_df, monthly_df, yearly_df], ["🗓️ 주간", "📅 월간", "📂 연간"]):
+        for col, data, p_name in zip([c1, c2, c3], [weekly_df, monthly_df, yearly_df], ["🗓️ 주간", "📅 월간", "📂 연간"]):
             with col:
-                st.subheader(period_name)
+                st.subheader(p_name)
                 curr = data[data['기간'] == data['기간'].max()]
-                disp = getattr(curr, func_name)(5, '증감률') if func_name else curr
+                disp = getattr(curr, func)(5, '증감률') if func else curr
                 st.dataframe(format_df(disp), use_container_width=True, hide_index=True)
         st.divider()
 
     # ============================================================================
-    # 4. 전문 AI 분석 섹션 (Gemini 2.0 적용)
+    # 4. 전문 AI 분석 섹션 (429 에러 방지 및 자동 재시도 로직)
     # ============================================================================
-    st.header("📝 이슈 구매 품목 종합 보고서 (Gemini 단가 예측)")
-    
+    st.header("📝 이슈 구매 품목 종합 보고서 (Gemini 2.0)")
     critical_items = get_critical_items(weekly_df, monthly_df, yearly_df)
-    st.write(f"🔔 **AI 분석 대상 ({len(critical_items)}개 품목):** {', '.join(critical_items)}")
+    st.write(f"🔔 **전체 분석 대상 ({len(critical_items)}개 품목):** {', '.join(critical_items)}")
 
-    if st.button("🔥 전체 품목 전문 Gemini 분석 시작"):
-        if not os.environ.get("GEMINI_API_KEY") or not os.environ.get("SERPER_API_KEY"):
-            st.error("🚨 API 키 설정을 확인해 주세요 (Secrets).")
+    if st.button("🔥 전체 품목 정밀 분석 시작"):
+        if not os.environ.get("GEMINI_API_KEY"):
+            st.error("🚨 API 키가 설정되지 않았습니다.")
         else:
             search_tool = SerperDevTool()
-            
-            # **[수정] 2026년 기준 가장 안정적인 모델 명칭: gemini/gemini-2.0-flash**
-            # 이전의 1.5 모델은 deprecated 되어 404 에러가 발생했던 것입니다.
-            gemini_llm = LLM(
-                model="gemini/gemini-2.0-flash", 
-                api_key=os.environ["GEMINI_API_KEY"]
-            )
+            gemini_llm = LLM(model="gemini/gemini-2.0-flash", api_key=os.environ["GEMINI_API_KEY"])
 
-            with st.status("최신 Gemini 엔진으로 분석 보고서를 생성 중입니다...", expanded=True) as status:
-                analyst = Agent(
-                    role="시장 수급 및 단가 예측 전문가",
-                    goal="뉴스와 데이터를 기반으로 품목별 향후 1~3개월 단가 예측",
-                    backstory="뉴스 근거를 바탕으로 단가 변동 인과관계를 분석하는 전문 분석가입니다.",
-                    llm=gemini_llm,
-                    tools=[search_tool],
-                    verbose=True
-                )
-                procurement = Agent(
-                    role="전략적 구매 관리 전문가",
-                    goal="예측된 단가 흐름에 따라 최적의 구매 시점 및 대응 전략 수립",
-                    backstory="원가 절감과 공급 안정성을 설계하는 전략가입니다.",
-                    llm=gemini_llm,
-                    verbose=True
-                )
+            with st.status("품목별 순차 분석 진행 중... (사용량 한도 준수를 위해 천천히 진행됩니다)", expanded=True) as status:
+                analyst = Agent(role="시장 예측가", goal="뉴스 기반 단가 예측", backstory="데이터 분석가", llm=gemini_llm, tools=[search_tool])
+                procurement = Agent(role="구매 전략가", goal="전략 수립", backstory="구매 전문가", llm=gemini_llm)
 
                 all_reports = []
                 progress_bar = st.progress(0)
                 
                 for idx, item in enumerate(critical_items):
-                    st.write(f"⏳ ({idx+1}/{len(critical_items)}) **{item}** 분석 중...")
+                    st.write(f"🔍 **{item}** 분석 중... ({idx+1}/{len(critical_items)})")
                     
-                    t1 = Task(description=f"{item}의 최신 뉴스 기반 향후 3개월 단가 예측", expected_output="원인 및 예측", agent=analyst)
-                    t2 = Task(description=f"{item}의 단가 예측에 따른 구매 실행 전략", expected_output="구매 가이드", agent=procurement)
+                    t1 = Task(description=f"{item}의 최신 뉴스 기반 3개월 단가 예측", expected_output="원인/예측", agent=analyst)
+                    t2 = Task(description=f"{item} 구매 전략 제안", expected_output="전략", agent=procurement)
+                    crew = Crew(agents=[analyst, procurement], tasks=[t1, t2], max_rpm=1) # RPM을 1로 극도로 낮춰 안정성 확보
+
+                    # --- 재시도(Retry) 로직 시작 ---
+                    success = False
+                    for attempt in range(3): # 최대 3번 시도
+                        try:
+                            report_out = crew.kickoff()
+                            all_reports.append(report_out.raw)
+                            success = True
+                            break # 성공 시 루프 탈출
+                        except Exception as e:
+                            if "429" in str(e):
+                                wait_time = 15 * (attempt + 1)
+                                st.warning(f"⏳ 사용량 한도 초과! {wait_time}초 후 다시 시도합니다... (시도 {attempt+1}/3)")
+                                time.sleep(wait_time)
+                            else:
+                                st.error(f"❌ {item} 오류: {str(e)}")
+                                break
                     
-                    # max_rpm=10으로 상향 조정 (Gemini 2.0은 속도가 더 빠름)
-                    crew = Crew(agents=[analyst, procurement], tasks=[t1, t2], max_rpm=10, verbose=True)
+                    if not success:
+                        all_reports.append(f"### {item}\n분석 한도 초과로 리포트 생성에 실패했습니다.")
                     
-                    try:
-                        report_out = crew.kickoff()
-                        all_reports.append(report_out.raw)
-                    except Exception as e:
-                        st.error(f"❌ {item} 분석 중 오류: {str(e)}")
-                        all_reports.append(f"### {item}\n분석 중 에러가 발생하여 생략되었습니다.")
-                    
-                    time.sleep(1) # API 보호를 위한 짧은 휴식
+                    # 다음 품목 분석 전 무조건 7초 휴식 (안전 장치)
+                    time.sleep(7)
                     progress_bar.progress((idx + 1) / len(critical_items))
 
-                final_report_md = f"# 📑 구매부서 종합 이슈 보고서 ({datetime.date.today()})\n\n" + "\n\n---\n\n".join(all_reports)
-                status.update(label="✅ 모든 품목 분석 완료!", state="complete", expanded=False)
+                final_report_md = f"# 📑 구매 종합 보고서 ({datetime.date.today()})\n\n" + "\n\n---\n\n".join(all_reports)
+                status.update(label="✅ 전체 품목 분석 완료!", state="complete", expanded=False)
 
             st.markdown(final_report_md)
             docx_file = markdown_to_docx_stream(final_report_md)
-            st.download_button(label="📄 Gemini 보고서 다운로드 (Word)", data=docx_file, file_name=f"Market_Report_{datetime.date.today()}.docx")
+            st.download_button(label="📄 Word 다운로드", data=docx_file, file_name=f"Market_Report_{datetime.date.today()}.docx")
