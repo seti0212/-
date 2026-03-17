@@ -8,7 +8,7 @@ from docx import Document
 from docx.shared import Pt, RGBColor, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from crewai import Agent, Task, Crew, LLM
-from crewai_tools import SerperDevTool # 뉴스 검색을 위한 도구
+from crewai_tools import SerperDevTool
 
 # ============================================================================
 # 1. 보안 및 환경 설정
@@ -23,11 +23,10 @@ else:
     with st.sidebar:
         st.header("🔑 보안 설정")
         user_key = st.text_input("OpenAI API Key", type="password")
-        serper_key = st.text_input("Serper API Key (뉴스 검색용)", type="password")
+        serper_key = st.text_input("Serper API Key", type="password")
         if user_key: os.environ["OPENAI_API_KEY"] = user_key
         if serper_key: os.environ["SERPER_API_KEY"] = serper_key
 
-# 구글 스프레드시트 URL
 url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vST3eDNhF1GLc231d4RdAnSCb8DnSznnZ4lJfPxxmtIHIcuEXbvFmrBI9LRdbURog-ik09vSOHTOAMp/pub?output=csv"
 
 @st.cache_data(ttl=600)
@@ -40,7 +39,6 @@ def load_data():
         st.error(f"데이터 로드 중 오류 발생: {e}")
         return None
 
-# Word 파일 생성 유틸리티
 def markdown_to_docx_stream(markdown_text):
     doc = Document()
     for section in doc.sections:
@@ -62,7 +60,7 @@ def markdown_to_docx_stream(markdown_text):
 df_raw = load_data()
 
 # ============================================================================
-# 2. 통계 계산 및 핵심 품목 추출 로직
+# 2. 통계 및 핵심 품목 추출 (안정성을 위해 최대 3개로 제한)
 # ============================================================================
 def calculate_all_stats(df):
     df = df.copy()
@@ -80,18 +78,16 @@ def calculate_all_stats(df):
     return get_stats(df, '연주'), get_stats(df, '연월'), get_stats(df, '연도')
 
 def get_critical_items(w_df, m_df, y_df):
-    """주/월/연 변동 폭이 큰 핵심 이슈 품목들을 중복 없이 추출"""
-    w_top = w_df[w_df['기간'] == w_df['기간'].max()].nlargest(3, '증감률')['품목'].tolist()
-    w_bot = w_df[w_df['기간'] == w_df['기간'].max()].nsmallest(3, '증감률')['품목'].tolist()
-    m_top = m_df[m_df['기간'] == m_df['기간'].max()].nlargest(2, '증감률')['품목'].tolist()
-    m_bot = m_df[m_df['기간'] == m_df['기간'].max()].nsmallest(2, '증감률')['품목'].tolist()
-    y_top = y_df[y_df['기간'] == y_df['기간'].max()].nlargest(2, '증감률')['품목'].tolist()
+    # 중복 제거 후 가장 변동이 큰 상위 품목만 추출
+    w_top = w_df[w_df['기간'] == w_df['기간'].max()].nlargest(2, '증감률')['품목'].tolist()
+    w_bot = w_df[w_df['기간'] == w_df['기간'].max()].nsmallest(1, '증감률')['품목'].tolist()
+    m_top = m_df[m_df['기간'] == m_df['기간'].max()].nlargest(1, '증감률')['품목'].tolist()
     
-    combined_items = list(set(w_top + w_bot + m_top + m_bot + y_top))
-    return combined_items
+    combined = list(set(w_top + w_bot + m_top))
+    return combined[:3] # **에러 방지: 분석 대상을 최대 3개로 엄격히 제한**
 
 # ============================================================================
-# 3. 메인 대시보드 (9개 테이블)
+# 3. 메인 대시보드 (9개 테이블 레이아웃 유지)
 # ============================================================================
 if df_raw is not None:
     weekly_df, monthly_df, yearly_df = calculate_all_stats(df_raw)
@@ -103,98 +99,73 @@ if df_raw is not None:
     def format_df(df):
         return df[display_cols].style.format({'평균시세': '{:,.2f}', '증감률': '{:+.2f}%'})
 
-    # 시세표 레이아웃 (기존 틀 유지)
+    # 3x3 테이블 레이아웃 (틀 유지)
     for section_title, func_name in [("🔍 기간별 전체 시세 현황", None), ("📈 가격 상승 TOP 5", "nlargest"), ("📉 가격 하락 TOP 5", "nsmallest")]:
         st.header(section_title)
         c1, c2, c3 = st.columns(3)
         for col, data, period_name in zip([c1, c2, c3], [weekly_df, monthly_df, yearly_df], ["🗓️ 주간", "📅 월간", "📂 연간"]):
             with col:
-                st.subheader(f"{period_name}")
-                current_data = data[data['기간'] == data['기간'].max()]
-                if func_name:
-                    display_data = getattr(current_data, func_name)(5, '증감률')
-                else:
-                    display_data = current_data
-                st.dataframe(format_df(display_data), use_container_width=True, hide_index=True)
+                st.subheader(period_name)
+                curr = data[data['기간'] == data['기간'].max()]
+                disp = getattr(curr, func_name)(5, '증감률') if func_name else curr
+                st.dataframe(format_df(disp), use_container_width=True, hide_index=True)
         st.divider()
 
     # ============================================================================
-    # 4. 전문 AI 에이전트 분석 섹션 (예측 및 뉴스 근거 강화)
+    # 4. 전문 AI 분석 섹션 (RateLimit 방지 최적화)
     # ============================================================================
     st.header("📝 이슈 구매 품목 보고서 (AI 단가 예측)")
     
     critical_items = get_critical_items(weekly_df, monthly_df, yearly_df)
-    st.write(f"🔔 **AI 분석 대상 후보:** {', '.join(critical_items)}")
-    st.caption("※ 실시간 뉴스와 변동 데이터를 결합하여 향후 단가 예측 및 전략적 근거를 도출합니다.")
+    st.write(f"🔔 **AI 집중 분석 대상:** {', '.join(critical_items)}")
+    st.caption("※ API 한도 보호를 위해 가장 이슈가 되는 3개 품목을 정밀 분석합니다.")
 
-    # 버튼 클릭 시에만 도구 및 에이전트 초기화 (속도 및 보안 최적화)
     if st.button("🔥 전문 AI 팀 분석 시작"):
         if not os.environ.get("OPENAI_API_KEY") or not os.environ.get("SERPER_API_KEY"):
-            st.error("사이드바에 OpenAI 및 Serper API Key를 입력해주세요.")
+            st.error("보안 설정을 완료해주세요 (API Key 미입력).")
         else:
-            search_tool = SerperDevTool() # 버튼 클릭 후 키가 로드된 상태에서 초기화
+            search_tool = SerperDevTool()
             
-            with st.status("실시간 뉴스 검색 및 단가 예측 시나리오 작성 중...", expanded=True) as status:
-                # 1. 원인 분석 및 단가 예측 에이전트
+            with st.status("Rate Limit을 준수하며 신중하게 분석 중입니다...", expanded=True) as status:
+                # **모델 변경: gpt-4o-mini (한도가 훨씬 넉넉함)**
+                llm_model = LLM(model="gpt-4o-mini")
+
                 analyst = Agent(
-                    role="농축수산물 수급 및 단가 예측 전문가",
-                    goal=f"{datetime.date.today()} 기준 최신 인터넷 뉴스를 검색하여 품목별 단가 변동의 근거를 찾고 향후 시세를 예측",
-                    backstory="""당신은 기상보도, 수출입 통계, 뉴스 기사를 종합 분석하여 
-                    미래 단가를 예측하는 수석 분석가입니다. 특히 뉴스의 핵심 내용을 인용하여 
-                    예측의 신뢰성을 높이는 데 탁월한 능력이 있습니다.""",
-                    llm=LLM(model="gpt-4o"),
+                    role="시장 수급 예측 전문가",
+                    goal="최신 뉴스를 근거로 향후 단가 예측",
+                    backstory="뉴스 데이터를 수집해 가격 변동의 인과관계를 밝힙니다.",
+                    llm=llm_model,
                     tools=[search_tool],
                     verbose=True
                 )
-
-                # 2. 구매 대응 전략 에이전트
                 procurement = Agent(
-                    role="구매 전략 및 원가 관리 전문가",
-                    goal="분석가의 예측 결과를 바탕으로 최적의 구매 시점과 대응 가이드 제시",
-                    backstory="분석된 단가 흐름에 따라 선매수, 구매 대기, 혹은 대체재 확보 등 실질적인 구매 액션 플랜을 설계합니다.",
-                    llm=LLM(model="gpt-4o"),
+                    role="구매 전략 전문가",
+                    goal="예측 결과에 따른 구매 실행 가이드 작성",
+                    backstory="리스크를 최소화하는 구매 시점을 결정합니다.",
+                    llm=llm_model,
                     verbose=True
                 )
 
                 all_reports = []
                 for item in critical_items:
-                    st.write(f"🔍 **{item}** 분석 및 미래 단가 예측 중...")
+                    st.write(f"🔍 **{item}** 분석 중 (대기 시간 포함)...")
+                    t1 = Task(description=f"{item}의 최근 뉴스 근거 및 향후 3개월 단가 예측", expected_output="원인 및 예측", agent=analyst)
+                    t2 = Task(description=f"{item} 구매 대응 전략 수립", expected_output="구매 가이드", agent=procurement)
                     
-                    # Task 1: 뉴스 근거 기반 분석 및 예측
-                    t1 = Task(
-                        description=f"""
-                        1. {item} 품목에 대한 최신 뉴스(최근 1개월 이내)를 검색하세요.
-                        2. 뉴스에서 언급된 가격 변동의 결정적 원인(기사 제목 혹은 핵심 내용)을 요약하세요.
-                        3. 이를 바탕으로 향후 1~3개월간의 단가가 '상승', '하락', '보합' 중 어떻게 변할지 예측하고 그 근거를 제시하세요.
-                        """,
-                        expected_output=f"{item}의 뉴스 근거 중심 원인 분석 및 단가 예측 보고서",
-                        agent=analyst
+                    # **핵심 수정: max_rpm=2 설정을 통해 분당 요청 속도 제한**
+                    crew = Crew(
+                        agents=[analyst, procurement], 
+                        tasks=[t1, t2], 
+                        max_rpm=2, # 분당 2회 요청으로 제한하여 에러 방지
+                        verbose=True
                     )
                     
-                    # Task 2: 전략 수립
-                    t2 = Task(
-                        description=f"""
-                        분석가가 예측한 {item}의 단가 흐름에 따라 구매 부서가 취해야 할 구체적인 행동(구매 시점, 확보 물량 등)을 제안하세요.
-                        """,
-                        expected_output=f"{item} 구매 대응 가이드",
-                        agent=procurement
-                    )
-                    
-                    crew = Crew(agents=[analyst, procurement], tasks=[t1, t2])
                     report_out = crew.kickoff()
                     all_reports.append(report_out.raw)
 
-                final_report_md = f"# 📑 구매부서 종합 마켓 이슈 보고서 ({datetime.date.today()})\n\n" + "\n\n---\n\n".join(all_reports)
-                status.update(label="✅ 모든 품목 분석 및 단가 예측 완료!", state="complete", expanded=False)
+                final_report_md = f"# 📑 구매부서 종합 보고서 ({datetime.date.today()})\n\n" + "\n\n---\n\n".join(all_reports)
+                status.update(label="✅ 안정적으로 분석 완료!", state="complete", expanded=False)
 
-            # 결과 화면 출력
             st.markdown(final_report_md)
-            
-            # 워드 다운로드 버튼
             docx_file = markdown_to_docx_stream(final_report_md)
-            st.download_button(
-                label="📄 전문 분석 보고서 다운로드 (Word)", 
-                data=docx_file, 
-                file_name=f"Market_Analysis_Report_{datetime.date.today()}.docx",
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            )
+            st.download_button(label="📄 Word 다운로드", data=docx_file, file_name=f"Report_{datetime.date.today()}.docx")
