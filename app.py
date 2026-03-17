@@ -103,7 +103,7 @@ if df_raw is not None:
     def format_df(df):
         return df[display_cols].style.format({'평균시세': '{:,.2f}', '증감률': '{:+.2f}%'})
 
-    # 시세표 레이아웃 (주/월/연 전체, 상승 TOP5, 하락 TOP5)
+    # 시세표 레이아웃 (기존 틀 유지)
     for section_title, func_name in [("🔍 기간별 전체 시세 현황", None), ("📈 가격 상승 TOP 5", "nlargest"), ("📉 가격 하락 TOP 5", "nsmallest")]:
         st.header(section_title)
         c1, c2, c3 = st.columns(3)
@@ -119,58 +119,82 @@ if df_raw is not None:
         st.divider()
 
     # ============================================================================
-    # 4. 전문 AI 에이전트 분석 섹션 (예측 강화)
+    # 4. 전문 AI 에이전트 분석 섹션 (예측 및 뉴스 근거 강화)
     # ============================================================================
     st.header("📝 이슈 구매 품목 보고서 (AI 단가 예측)")
     
     critical_items = get_critical_items(weekly_df, monthly_df, yearly_df)
     st.write(f"🔔 **AI 분석 대상 후보:** {', '.join(critical_items)}")
-    st.caption("※ 최신 뉴스와 수급 데이터를 바탕으로 향후 1~3개월 단가를 예측합니다.")
+    st.caption("※ 실시간 뉴스와 변동 데이터를 결합하여 향후 단가 예측 및 전략적 근거를 도출합니다.")
 
-    search_tool = SerperDevTool()
-
+    # 버튼 클릭 시에만 도구 및 에이전트 초기화 (속도 및 보안 최적화)
     if st.button("🔥 전문 AI 팀 분석 시작"):
         if not os.environ.get("OPENAI_API_KEY") or not os.environ.get("SERPER_API_KEY"):
             st.error("사이드바에 OpenAI 및 Serper API Key를 입력해주세요.")
         else:
-            with st.status("실시간 뉴스 검색 및 단가 예측 중...", expanded=True) as status:
-                # 에이전트 설정
+            search_tool = SerperDevTool() # 버튼 클릭 후 키가 로드된 상태에서 초기화
+            
+            with st.status("실시간 뉴스 검색 및 단가 예측 시나리오 작성 중...", expanded=True) as status:
+                # 1. 원인 분석 및 단가 예측 에이전트
                 analyst = Agent(
-                    role="농축수산물 시장 수급 예측 전문가",
-                    goal=f"{datetime.date.today()} 기준 최신 뉴스를 바탕으로 품목별 향후 시세 방향성 예측",
-                    backstory="뉴스 보도와 정부 데이터를 종합하여 단기/중기 시세를 정확히 예측하는 분석가입니다.",
+                    role="농축수산물 수급 및 단가 예측 전문가",
+                    goal=f"{datetime.date.today()} 기준 최신 인터넷 뉴스를 검색하여 품목별 단가 변동의 근거를 찾고 향후 시세를 예측",
+                    backstory="""당신은 기상보도, 수출입 통계, 뉴스 기사를 종합 분석하여 
+                    미래 단가를 예측하는 수석 분석가입니다. 특히 뉴스의 핵심 내용을 인용하여 
+                    예측의 신뢰성을 높이는 데 탁월한 능력이 있습니다.""",
                     llm=LLM(model="gpt-4o"),
                     tools=[search_tool],
                     verbose=True
                 )
+
+                # 2. 구매 대응 전략 에이전트
                 procurement = Agent(
-                    role="구매 전략 및 리스크 관리 전문가",
-                    goal="예측된 단가 변화에 따른 최적의 구매 시점 제시",
-                    backstory="분석가의 예측을 바탕으로 선매수 혹은 대기 전략을 수립하는 구매 전략가입니다.",
+                    role="구매 전략 및 원가 관리 전문가",
+                    goal="분석가의 예측 결과를 바탕으로 최적의 구매 시점과 대응 가이드 제시",
+                    backstory="분석된 단가 흐름에 따라 선매수, 구매 대기, 혹은 대체재 확보 등 실질적인 구매 액션 플랜을 설계합니다.",
                     llm=LLM(model="gpt-4o"),
                     verbose=True
                 )
 
                 all_reports = []
                 for item in critical_items:
-                    st.write(f"🔍 **{item}** 분석 중...")
+                    st.write(f"🔍 **{item}** 분석 및 미래 단가 예측 중...")
+                    
+                    # Task 1: 뉴스 근거 기반 분석 및 예측
                     t1 = Task(
-                        description=f"{item}의 최근 급등락 원인을 뉴스에서 찾아 분석하고, 향후 1~3개월 단가(상승/하락/보합)를 예측하세요. 반드시 뉴스 기사 근거를 포함하세요.",
-                        expected_output=f"{item} 원인 분석 및 단가 예측 보고서",
+                        description=f"""
+                        1. {item} 품목에 대한 최신 뉴스(최근 1개월 이내)를 검색하세요.
+                        2. 뉴스에서 언급된 가격 변동의 결정적 원인(기사 제목 혹은 핵심 내용)을 요약하세요.
+                        3. 이를 바탕으로 향후 1~3개월간의 단가가 '상승', '하락', '보합' 중 어떻게 변할지 예측하고 그 근거를 제시하세요.
+                        """,
+                        expected_output=f"{item}의 뉴스 근거 중심 원인 분석 및 단가 예측 보고서",
                         agent=analyst
                     )
+                    
+                    # Task 2: 전략 수립
                     t2 = Task(
-                        description=f"{item}의 예측 결과에 따른 구체적인 구매 대응 전략(구매 시점, 재고 확보 등)을 제안하세요.",
-                        expected_output=f"{item} 구매 가이드",
+                        description=f"""
+                        분석가가 예측한 {item}의 단가 흐름에 따라 구매 부서가 취해야 할 구체적인 행동(구매 시점, 확보 물량 등)을 제안하세요.
+                        """,
+                        expected_output=f"{item} 구매 대응 가이드",
                         agent=procurement
                     )
+                    
                     crew = Crew(agents=[analyst, procurement], tasks=[t1, t2])
                     report_out = crew.kickoff()
                     all_reports.append(report_out.raw)
 
                 final_report_md = f"# 📑 구매부서 종합 마켓 이슈 보고서 ({datetime.date.today()})\n\n" + "\n\n---\n\n".join(all_reports)
-                status.update(label="✅ 분석 및 예측 완료!", state="complete", expanded=False)
+                status.update(label="✅ 모든 품목 분석 및 단가 예측 완료!", state="complete", expanded=False)
 
+            # 결과 화면 출력
             st.markdown(final_report_md)
+            
+            # 워드 다운로드 버튼
             docx_file = markdown_to_docx_stream(final_report_md)
-            st.download_button(label="📄 Word 보고서 다운로드", data=docx_file, file_name=f"Market_Report_{datetime.date.today()}.docx")
+            st.download_button(
+                label="📄 전문 분석 보고서 다운로드 (Word)", 
+                data=docx_file, 
+                file_name=f"Market_Analysis_Report_{datetime.date.today()}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
