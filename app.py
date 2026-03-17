@@ -4,7 +4,7 @@ import os
 import datetime
 import re
 import io
-import SerperDevTool
+from crewai_tools import SerperDevTool
 from docx import Document
 from docx.shared import Pt, RGBColor, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
