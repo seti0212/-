@@ -57,7 +57,7 @@ def markdown_to_docx_stream(markdown_text):
 df_raw = load_data()
 
 # ============================================================================
-# 2. 통계 계산 및 전체 이슈 품목 추출 (주/월/연 각 2개씩 선정)
+# 2. 통계 계산 및 핵심 이슈 품목 추출 (주/월/연 각 2개씩 선정)
 # ============================================================================
 def calculate_all_stats(df):
     df = df.copy()
@@ -83,7 +83,6 @@ def get_critical_items(w_df, m_df, y_df):
     y_top = y_df[y_df['기간'] == y_df['기간'].max()].nlargest(1, '증감률')['품목'].tolist()
     y_bot = y_df[y_df['기간'] == y_df['기간'].max()].nsmallest(1, '증감률')['품목'].tolist()
     
-    # 리스트 통합 및 중복 제거 (최대 6개 품목)
     return list(set(w_top + w_bot + m_top + m_bot + y_top + y_bot))
 
 # ============================================================================
@@ -108,9 +107,9 @@ if df_raw is not None:
         st.divider()
 
     # ============================================================================
-    # 4. 전문 AI 분석 섹션 (분석 대상 압축 및 안정화 로직 유지)
+    # 4. 전문 AI 분석 섹션 (Gemini 2.5 Flash 적용)
     # ============================================================================
-    st.header("📝 이슈 구매 품목 종합 보고서 (Gemini 2.0)")
+    st.header("📝 이슈 구매 품목 종합 보고서 (Gemini 2.5 Flash)")
     critical_items = get_critical_items(weekly_df, monthly_df, yearly_df)
     st.write(f"🔔 **AI 정밀 분석 대상 (핵심 {len(critical_items)}개 품목):** {', '.join(critical_items)}")
 
@@ -119,9 +118,10 @@ if df_raw is not None:
             st.error("🚨 API 키가 설정되지 않았습니다.")
         else:
             search_tool = SerperDevTool()
-            gemini_llm = LLM(model="gemini/gemini-2.0-flash", api_key=os.environ["GEMINI_API_KEY"])
+            # 모델명을 gemini/gemini-2.5-flash로 설정
+            gemini_llm = LLM(model="gemini/gemini-2.5-flash", api_key=os.environ["GEMINI_API_KEY"])
 
-            with st.status("핵심 품목 순차 분석 중...", expanded=True) as status:
+            with st.status("Gemini 2.5 분석팀이 가동 중입니다...", expanded=True) as status:
                 analyst = Agent(role="시장 예측가", goal="뉴스 기반 단가 예측", backstory="데이터 분석가", llm=gemini_llm, tools=[search_tool])
                 procurement = Agent(role="구매 전략가", goal="전략 수립", backstory="구매 전문가", llm=gemini_llm)
 
@@ -145,15 +145,16 @@ if df_raw is not None:
                         except Exception as e:
                             if "429" in str(e):
                                 wait_time = 15 * (attempt + 1)
-                                st.warning(f"⏳ 사용량 한도 초과! {wait_time}초 후 다시 시도합니다... ({attempt+1}/3)")
+                                st.warning(f"⏳ 과부하 방지를 위해 {wait_time}초 후 재시도합니다... ({attempt+1}/3)")
                                 time.sleep(wait_time)
                             else:
                                 st.error(f"❌ {item} 오류: {str(e)}")
                                 break
                     
                     if not success:
-                        all_reports.append(f"### {item}\n분석 한도 초과로 리포트 생성에 실패했습니다.")
+                        all_reports.append(f"### {item}\n분석 한도 초과 또는 에러로 리포트 생성에 실패했습니다.")
                     
+                    # API 안정성을 위한 휴식
                     time.sleep(7)
                     progress_bar.progress((idx + 1) / len(critical_items))
 
