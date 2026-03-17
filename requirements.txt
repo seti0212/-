@@ -2,5 +2,5 @@ streamlit
 pandas
 crewai
 crewai-tools
-python-dotenv
 python-docx
+google-generativeai
