@@ -2,3 +2,4 @@ streamlit
 pandas
 crewai
 langchain-openai
+pysqlite3-binary
