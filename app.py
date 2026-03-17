@@ -4,31 +4,28 @@ import os
 import datetime
 import re
 import io
-from crewai_tools import SerperDevTool
 from docx import Document
 from docx.shared import Pt, RGBColor, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from crewai import Agent, Task, Crew, LLM
+from crewai_tools import SerperDevTool # 뉴스 검색을 위한 도구
 
 # ============================================================================
-# 1. 보안 및 환경 설정 (API 키 숨기기)
+# 1. 보안 및 환경 설정
 # ============================================================================
 st.set_page_config(page_title="구매지원팀 통합 분석 시스템", layout="wide")
 
-# [보안] API 키를 불러오는 3단계 전략
+# API 키 보안 로드
 if "OPENAI_API_KEY" in st.secrets:
-    # 1순위: Streamlit Cloud의 Secrets에 저장된 키 사용
     os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
+    os.environ["SERPER_API_KEY"] = st.secrets.get("SERPER_API_KEY", "")
 else:
-    # 2순위: 키가 설정되지 않은 경우 사이드바에서 사용자에게 직접 입력받음
     with st.sidebar:
         st.header("🔑 보안 설정")
-        user_key = st.text_input("OpenAI API Key를 입력하세요", type="password")
-        if user_key:
-            os.environ["OPENAI_API_KEY"] = user_key
-            st.success("API 키가 임시 설정되었습니다.")
-        else:
-            st.warning("AI 기능을 사용하려면 API 키가 필요합니다.")
+        user_key = st.text_input("OpenAI API Key", type="password")
+        serper_key = st.text_input("Serper API Key (뉴스 검색용)", type="password")
+        if user_key: os.environ["OPENAI_API_KEY"] = user_key
+        if serper_key: os.environ["SERPER_API_KEY"] = serper_key
 
 # 구글 스프레드시트 URL
 url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vST3eDNhF1GLc231d4RdAnSCb8DnSznnZ4lJfPxxmtIHIcuEXbvFmrBI9LRdbURog-ik09vSOHTOAMp/pub?output=csv"
@@ -65,7 +62,7 @@ def markdown_to_docx_stream(markdown_text):
 df_raw = load_data()
 
 # ============================================================================
-# 2. 통계 계산 함수
+# 2. 통계 계산 및 핵심 품목 추출 로직
 # ============================================================================
 def calculate_all_stats(df):
     df = df.copy()
@@ -82,71 +79,8 @@ def calculate_all_stats(df):
 
     return get_stats(df, '연주'), get_stats(df, '연월'), get_stats(df, '연도')
 
-# ============================================================================
-# 3. 메인 대시보드 (9개 테이블 3x3 레이아웃)
-# ============================================================================
-if df_raw is not None:
-    weekly_df, monthly_df, yearly_df = calculate_all_stats(df_raw)
-
-    st.title("📊 원자재 시세 실시간 분석 및 전문 AI 보고서")
-    st.info(f"데이터 업데이트 시각: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-
-    # 공통 데이터 포맷
-    display_cols = ['품목', '평균시세', '단위', '증감률']
-    def format_df(df):
-        return df[display_cols].style.format({'평균시세': '{:,.2f}', '증감률': '{:+.2f}%'})
-
-    # --- Section 1: 기간별 전체 현황 ---
-    st.header("🔍 기간별 전체 시세 현황")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.subheader("🗓️ 주간 평균")
-        st.dataframe(format_df(weekly_df[weekly_df['기간'] == weekly_df['기간'].max()]), use_container_width=True, hide_index=True)
-    with c2:
-        st.subheader("📅 월간 평균")
-        st.dataframe(format_df(monthly_df[monthly_df['기간'] == monthly_df['기간'].max()]), use_container_width=True, hide_index=True)
-    with c3:
-        st.subheader("📂 연간 평균")
-        st.dataframe(format_df(yearly_df[yearly_df['기간'] == yearly_df['기간'].max()]), use_container_width=True, hide_index=True)
-
-    st.divider()
-
-    # --- Section 2: 가격 상승 TOP 5 ---
-    st.header("📈 가격 상승 TOP 5")
-    u1, u2, u3 = st.columns(3)
-    with u1:
-        st.subheader("🗓️ 주간 상승")
-        st.dataframe(format_df(weekly_df[weekly_df['기간'] == weekly_df['기간'].max()].nlargest(5, '증감률')), use_container_width=True, hide_index=True)
-    with u2:
-        st.subheader("📅 월간 상승")
-        st.dataframe(format_df(monthly_df[monthly_df['기간'] == monthly_df['기간'].max()].nlargest(5, '증감률')), use_container_width=True, hide_index=True)
-    with u3:
-        st.subheader("📂 연간 상승")
-        st.dataframe(format_df(yearly_df[yearly_df['기간'] == yearly_df['기간'].max()].nlargest(5, '증감률')), use_container_width=True, hide_index=True)
-
-    # --- Section 3: 가격 하락 TOP 5 ---
-    st.header("📉 가격 하락 TOP 5")
-    d1, d2, d3 = st.columns(3)
-    with d1:
-        st.subheader("🗓️ 주간 하락")
-        st.dataframe(format_df(weekly_df[weekly_df['기간'] == weekly_df['기간'].max()].nsmallest(5, '증감률')), use_container_width=True, hide_index=True)
-    with d2:
-        st.subheader("📅 월간 하락")
-        st.dataframe(format_df(monthly_df[monthly_df['기간'] == monthly_df['기간'].max()].nsmallest(5, '증감률')), use_container_width=True, hide_index=True)
-    with d3:
-        st.subheader("📂 연간 하락")
-        st.dataframe(format_df(yearly_df[yearly_df['기간'] == yearly_df['기간'].max()].nsmallest(5, '증감률')), use_container_width=True, hide_index=True)
-
-# ============================================================================
-# 4. 전문 AI 에이전트 분석 섹션 (예측 및 뉴스 근거 강화)
-# ============================================================================
-st.divider()
-st.header("📝 이슈 구매 품목 보고서 (AI)")
-
-# 검색 도구 초기화 (인터넷 뉴스 검색용)
-search_tool = SerperDevTool()
-
 def get_critical_items(w_df, m_df, y_df):
+    """주/월/연 변동 폭이 큰 핵심 이슈 품목들을 중복 없이 추출"""
     w_top = w_df[w_df['기간'] == w_df['기간'].max()].nlargest(3, '증감률')['품목'].tolist()
     w_bot = w_df[w_df['기간'] == w_df['기간'].max()].nsmallest(3, '증감률')['품목'].tolist()
     m_top = m_df[m_df['기간'] == m_df['기간'].max()].nlargest(2, '증감률')['품목'].tolist()
@@ -156,88 +90,87 @@ def get_critical_items(w_df, m_df, y_df):
     combined_items = list(set(w_top + w_bot + m_top + m_bot + y_top))
     return combined_items
 
-critical_items = get_critical_items(weekly_df, monthly_df, yearly_df)
+# ============================================================================
+# 3. 메인 대시보드 (9개 테이블)
+# ============================================================================
+if df_raw is not None:
+    weekly_df, monthly_df, yearly_df = calculate_all_stats(df_raw)
 
-st.write(f"🔔 **AI 분석 대상 후보:** {', '.join(critical_items)}")
-st.caption("※ 최신 뉴스와 시세 데이터를 바탕으로 향후 단가 예측 및 근거를 분석합니다.")
+    st.title("📊 원자재 시세 실시간 분석 및 전문 AI 보고서")
+    st.info(f"데이터 업데이트 시각: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-if st.button("🔥 전문 AI 팀 분석 시작"):
-    if not os.environ.get("OPENAI_API_KEY"):
-        st.error("사이드바에 OpenAI API Key를 입력하거나 Secrets를 설정해주세요.")
-    else:
-        with st.status("전문 분석팀이 실시간 뉴스와 변동 추이를 분석 중입니다...", expanded=True) as status:
-            
-            # 1. 에이전트 설정 (뉴스 분석 및 예측 기능 강화)
-            analyst = Agent(
-                role="농축수산물 시장 수급 예측 전문가",
-                goal=f"{datetime.date.today()} 기준 최신 뉴스와 데이터를 바탕으로 품목별 향후 시세 방향성을 예측",
-                backstory="""당신은 인터넷 뉴스, 기상보도, 정부 발표 자료를 종합하여 
-                단기 및 중기 가격 변동을 정확하게 예측하는 데이터 분석가입니다. 
-                단순 현상 나열이 아닌 '뉴스 근거'를 바탕으로 한 예측에 강점이 있습니다.""",
-                llm=LLM(model="gpt-4o"),
-                tools=[search_tool], # 인터넷 검색 도구 부여
-                verbose=True
-            )
-            
-            procurement = Agent(
-                role="구매 전략 및 리스크 관리 전문가",
-                goal="예측된 단가 변화에 따른 최적의 구매 시점과 대응 시나리오 제시",
-                backstory="""당신은 분석가의 예측을 바탕으로 '지금 사야 할지, 기다려야 할지'를 결정합니다. 
-                상승 예측 시 선매수 전략을, 하락 예측 시 재고 최소화 전략을 수립합니다.""",
-                llm=LLM(model="gpt-4o"),
-                verbose=True
-            )
+    display_cols = ['품목', '평균시세', '단위', '증감률']
+    def format_df(df):
+        return df[display_cols].style.format({'평균시세': '{:,.2f}', '증감률': '{:+.2f}%'})
 
-            all_reports = []
-            
-            for item in critical_items:
-                st.write(f"🔍 **{item}** (뉴스 검색 및 미래 단가 예측 중...)")
-                
-                # 태스크 1: 뉴스 기반 원인 분석 및 미래 예측
-                t1 = Task(
-                    description=f"""
-                    작업: {item} 품목에 대한 '최신 인터넷 뉴스'와 '수급 데이터'를 검색하여 분석하세요.
-                    내용:
-                    1. 최근 시세 변동의 결정적 원인 (뉴스 기사 제목 및 내용 인용)
-                    2. 향후 1~3개월간의 단가 예측 (상승 / 하락 / 보합 중 선택)
-                    3. 예측 근거: 기후 이변, 생산지 소식, 정부 정책 등 뉴스에서 확인된 구체적 사실 제시
-                    """,
-                    expected_output=f"{item}의 최신 뉴스 기반 원인 분석 및 향후 단가 예측 보고서",
-                    agent=analyst
+    # 시세표 레이아웃 (주/월/연 전체, 상승 TOP5, 하락 TOP5)
+    for section_title, func_name in [("🔍 기간별 전체 시세 현황", None), ("📈 가격 상승 TOP 5", "nlargest"), ("📉 가격 하락 TOP 5", "nsmallest")]:
+        st.header(section_title)
+        c1, c2, c3 = st.columns(3)
+        for col, data, period_name in zip([c1, c2, c3], [weekly_df, monthly_df, yearly_df], ["🗓️ 주간", "📅 월간", "📂 연간"]):
+            with col:
+                st.subheader(f"{period_name}")
+                current_data = data[data['기간'] == data['기간'].max()]
+                if func_name:
+                    display_data = getattr(current_data, func_name)(5, '증감률')
+                else:
+                    display_data = current_data
+                st.dataframe(format_df(display_data), use_container_width=True, hide_index=True)
+        st.divider()
+
+    # ============================================================================
+    # 4. 전문 AI 에이전트 분석 섹션 (예측 강화)
+    # ============================================================================
+    st.header("📝 이슈 구매 품목 보고서 (AI 단가 예측)")
+    
+    critical_items = get_critical_items(weekly_df, monthly_df, yearly_df)
+    st.write(f"🔔 **AI 분석 대상 후보:** {', '.join(critical_items)}")
+    st.caption("※ 최신 뉴스와 수급 데이터를 바탕으로 향후 1~3개월 단가를 예측합니다.")
+
+    search_tool = SerperDevTool()
+
+    if st.button("🔥 전문 AI 팀 분석 시작"):
+        if not os.environ.get("OPENAI_API_KEY") or not os.environ.get("SERPER_API_KEY"):
+            st.error("사이드바에 OpenAI 및 Serper API Key를 입력해주세요.")
+        else:
+            with st.status("실시간 뉴스 검색 및 단가 예측 중...", expanded=True) as status:
+                # 에이전트 설정
+                analyst = Agent(
+                    role="농축수산물 시장 수급 예측 전문가",
+                    goal=f"{datetime.date.today()} 기준 최신 뉴스를 바탕으로 품목별 향후 시세 방향성 예측",
+                    backstory="뉴스 보도와 정부 데이터를 종합하여 단기/중기 시세를 정확히 예측하는 분석가입니다.",
+                    llm=LLM(model="gpt-4o"),
+                    tools=[search_tool],
+                    verbose=True
                 )
-                
-                # 태스크 2: 예측에 따른 구매 실행 가이드
-                t2 = Task(
-                    description=f"""
-                    작업: 분석가가 제시한 {item}의 단가 예측(상승/하락)에 따라 구체적인 구매 행동 지침을 작성하세요.
-                    내용:
-                    - 예상 단가 흐름: [예: 다음 주부터 완만한 상승세 예상]
-                    - 대응 전략: [예: 재고 2주분 추가 확보 필요]
-                    - 근거 요약: 뉴스에서 언급된 어떤 리스크 때문에 이 전략을 택했는지 설명
-                    """,
-                    expected_output=f"{item} 구매 대응 가이드 및 예측 요약",
-                    agent=procurement
+                procurement = Agent(
+                    role="구매 전략 및 리스크 관리 전문가",
+                    goal="예측된 단가 변화에 따른 최적의 구매 시점 제시",
+                    backstory="분석가의 예측을 바탕으로 선매수 혹은 대기 전략을 수립하는 구매 전략가입니다.",
+                    llm=LLM(model="gpt-4o"),
+                    verbose=True
                 )
-                
-                crew = Crew(agents=[analyst, procurement], tasks=[t1, t2])
-                report_out = crew.kickoff()
-                all_reports.append(report_out.raw)
 
-            # 최종 보고서 통합
-            final_report_md = f"# 📑 구매부서 종합 마켓 이슈 보고서 ({datetime.date.today()})\n\n"
-            final_report_md += "## 🎯 핵심 요약: 향후 단가 예측 및 뉴스 근거\n"
-            final_report_md += f"본 보고서는 **{', '.join(critical_items)}** 품목에 대한 최신 뉴스 기반 예측을 담고 있습니다.\n\n"
-            final_report_md += "\n\n---\n\n".join(all_reports)
-            
-            status.update(label="✅ 분석 및 단가 예측 완료!", state="complete", expanded=False)
+                all_reports = []
+                for item in critical_items:
+                    st.write(f"🔍 **{item}** 분석 중...")
+                    t1 = Task(
+                        description=f"{item}의 최근 급등락 원인을 뉴스에서 찾아 분석하고, 향후 1~3개월 단가(상승/하락/보합)를 예측하세요. 반드시 뉴스 기사 근거를 포함하세요.",
+                        expected_output=f"{item} 원인 분석 및 단가 예측 보고서",
+                        agent=analyst
+                    )
+                    t2 = Task(
+                        description=f"{item}의 예측 결과에 따른 구체적인 구매 대응 전략(구매 시점, 재고 확보 등)을 제안하세요.",
+                        expected_output=f"{item} 구매 가이드",
+                        agent=procurement
+                    )
+                    crew = Crew(agents=[analyst, procurement], tasks=[t1, t2])
+                    report_out = crew.kickoff()
+                    all_reports.append(report_out.raw)
 
-        # 결과 출력 및 다운로드 버튼
-        st.markdown(final_report_md)
-        
-        docx_file = markdown_to_docx_stream(final_report_md)
-        st.download_button(
-            label="📄 전문 분석 보고서 다운로드 (Word)", 
-            data=docx_file, 
-            file_name=f"Market_Analysis_Report_{datetime.date.today()}.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        )
+                final_report_md = f"# 📑 구매부서 종합 마켓 이슈 보고서 ({datetime.date.today()})\n\n" + "\n\n---\n\n".join(all_reports)
+                status.update(label="✅ 분석 및 예측 완료!", state="complete", expanded=False)
+
+            st.markdown(final_report_md)
+            docx_file = markdown_to_docx_stream(final_report_md)
+            st.download_button(label="📄 Word 보고서 다운로드", data=docx_file, file_name=f"Market_Report_{datetime.date.today()}.docx")
