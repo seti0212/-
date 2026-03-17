@@ -1,5 +1,5 @@
 streamlit
 pandas
+python-docx
 crewai
-langchain-openai
 pysqlite3-binary
