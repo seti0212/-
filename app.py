@@ -12,18 +12,20 @@ from crewai import Agent, Task, Crew, LLM
 from crewai_tools import SerperDevTool
 
 # ============================================================================
-# 1. 환경 및 보안 설정 (Gemini 전용)
+# 1. 환경 및 보안 설정 (사이드바 제거 및 Gemini 호환성 강화)
 # ============================================================================
 st.set_page_config(page_title="구매지원팀 통합 분석 시스템 (Gemini)", layout="wide")
 
-# [보안] Streamlit Secrets에서 API 키 로드
+# [보안] Streamlit Secrets에서 키 로드 및 환경 변수 이중 설정 (호환성 목적)
 if "GEMINI_API_KEY" in st.secrets:
-    os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
+    api_key = st.secrets["GEMINI_API_KEY"]
+    os.environ["GEMINI_API_KEY"] = api_key
+    os.environ["GOOGLE_API_KEY"] = api_key  # 구글 라이브러리 직접 참조용
     os.environ["SERPER_API_KEY"] = st.secrets.get("SERPER_API_KEY", "")
 else:
-    st.error("⚠️ API 키가 설정되지 않았습니다. Streamlit Cloud 앱 설정의 Secrets 항목을 확인해 주세요.")
+    st.error("🚨 API 키가 설정되지 않았습니다. Streamlit Cloud의 Secrets 설정을 완료해 주세요.")
 
-# 데이터 소스
+# 데이터 소스 (구글 스프레드시트)
 url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vST3eDNhF1GLc231d4RdAnSCb8DnSznnZ4lJfPxxmtIHIcuEXbvFmrBI9LRdbURog-ik09vSOHTOAMp/pub?output=csv"
 
 @st.cache_data(ttl=600)
@@ -57,7 +59,7 @@ def markdown_to_docx_stream(markdown_text):
 df_raw = load_data()
 
 # ============================================================================
-# 2. 통계 계산 및 핵심 이슈 품목 추출
+# 2. 통계 계산 및 핵심 이슈 품목 추출 로직
 # ============================================================================
 def calculate_all_stats(df):
     df = df.copy()
@@ -75,17 +77,19 @@ def calculate_all_stats(df):
     return get_stats(df, '연주'), get_stats(df, '연월'), get_stats(df, '연도')
 
 def get_critical_items(w_df, m_df, y_df):
+    """주/월/연 전체에서 모든 상승/하락 이슈 품목을 중복 없이 수집"""
     w_top = w_df[w_df['기간'] == w_df['기간'].max()].nlargest(5, '증감률')['품목'].tolist()
     w_bot = w_df[w_df['기간'] == w_df['기간'].max()].nsmallest(5, '증감률')['품목'].tolist()
     m_top = m_df[m_df['기간'] == m_df['기간'].max()].nlargest(5, '증감률')['품목'].tolist()
     m_bot = m_df[m_df['기간'] == m_df['기간'].max()].nsmallest(5, '증감률')['품목'].tolist()
     y_top = y_df[y_df['기간'] == y_df['기간'].max()].nlargest(5, '증감률')['품목'].tolist()
     y_bot = y_df[y_df['기간'] == y_df['기간'].max()].nsmallest(5, '증감률')['품목'].tolist()
+    
     combined = list(set(w_top + w_bot + m_top + m_bot + y_top + y_bot))
     return combined
 
 # ============================================================================
-# 3. 메인 대시보드 (기존 3x3 레이아웃)
+# 3. 메인 대시보드 (3x3 레이아웃 100% 유지)
 # ============================================================================
 if df_raw is not None:
     weekly_df, monthly_df, yearly_df = calculate_all_stats(df_raw)
@@ -97,6 +101,7 @@ if df_raw is not None:
     def format_df(df):
         return df[display_cols].style.format({'평균시세': '{:,.2f}', '증감률': '{:+.2f}%'})
 
+    # 시세표 레이아웃 출력
     for section_title, func_name in [("🔍 기간별 전체 시세 현황", None), ("📈 가격 상승 TOP 5", "nlargest"), ("📉 가격 하락 TOP 5", "nsmallest")]:
         st.header(section_title)
         c1, c2, c3 = st.columns(3)
@@ -109,7 +114,7 @@ if df_raw is not None:
         st.divider()
 
     # ============================================================================
-    # 4. 전문 AI 분석 섹션 (Gemini 기반)
+    # 4. 전문 AI 분석 섹션 (Gemini 404 에러 수정 적용)
     # ============================================================================
     st.header("📝 이슈 구매 품목 종합 보고서 (Gemini 단가 예측)")
     
@@ -117,27 +122,31 @@ if df_raw is not None:
     st.write(f"🔔 **AI 분석 대상 ({len(critical_items)}개 품목):** {', '.join(critical_items)}")
 
     if st.button("🔥 전체 품목 전문 Gemini 분석 시작"):
-        # 키 설정 확인
         if not os.environ.get("GEMINI_API_KEY") or not os.environ.get("SERPER_API_KEY"):
-            st.error("🚨 API 키가 설정되지 않았습니다. Secrets를 확인해 주세요.")
+            st.error("🚨 API 키 설정을 확인해 주세요. (Secrets 미등록)")
         else:
             search_tool = SerperDevTool()
-            # Gemini 모델 호출 (ImportError 방지를 위해 라이브러리 설치가 선행되어야 함)
-            gemini_llm = LLM(model="gemini/gemini-1.5-flash", api_key=os.environ["GEMINI_API_KEY"])
+            
+            # [수정] 모델 명칭을 "google/gemini-1.5-flash"로 변경하여 404 에러 해결
+            # api_key를 명시적으로 전달하여 인증 오류 방지
+            gemini_llm = LLM(
+                model="google/gemini-1.5-flash", 
+                api_key=os.environ["GEMINI_API_KEY"]
+            )
 
-            with st.status("Gemini 분석팀이 보고서를 작성 중입니다...", expanded=True) as status:
+            with st.status("Gemini 분석팀이 실시간 뉴스를 기반으로 분석 중입니다...", expanded=True) as status:
                 analyst = Agent(
                     role="시장 수급 및 단가 예측 전문가",
-                    goal="뉴스와 데이터를 기반으로 향후 1~3개월 단가 예측",
-                    backstory="뉴스 근거를 바탕으로 단가 변동 인과관계를 밝히는 분석가입니다.",
+                    goal="최신 뉴스와 데이터를 기반으로 품목별 향후 1~3개월 단가 방향성 예측",
+                    backstory="인터넷 뉴스 및 수급 통계를 기반으로 단가 변동 근거를 명확히 제시하는 분석가입니다.",
                     llm=gemini_llm,
                     tools=[search_tool],
                     verbose=True
                 )
                 procurement = Agent(
                     role="전략적 구매 관리 전문가",
-                    goal="예측된 단가 흐름에 따라 최적의 구매 전략 수립",
-                    backstory="원가 절감과 공급 안정성을 설계하는 전략가입니다.",
+                    goal="예측된 단가 흐름에 따라 최적의 구매 시점 및 리스크 관리 전략 수립",
+                    backstory="원가 절감 및 공급 안정성을 위한 실질적 구매 플랜을 설계합니다.",
                     llm=gemini_llm,
                     verbose=True
                 )
@@ -146,10 +155,18 @@ if df_raw is not None:
                 progress_bar = st.progress(0)
                 
                 for idx, item in enumerate(critical_items):
-                    st.write(f"⏳ ({idx+1}/{len(critical_items)}) **{item}** 분석 중...")
+                    st.write(f"⏳ ({idx+1}/{len(critical_items)}) **{item}** 정밀 진단 중...")
                     
-                    t1 = Task(description=f"{item}의 최신 뉴스 기반 향후 3개월 단가 예측", expected_output="원인 및 예측", agent=analyst)
-                    t2 = Task(description=f"{item}의 단가 예측에 따른 구매 대응 전략", expected_output="구매 가이드", agent=procurement)
+                    t1 = Task(
+                        description=f"{item}의 최근 급등락 원인을 최신 뉴스에서 찾아 분석하고, 향후 1~3개월 단가(상승/하락/보합)를 구체적 뉴스 근거와 함께 예측하세요.",
+                        expected_output=f"{item} 뉴스 기반 원인 분석 및 단가 예측 보고서",
+                        agent=analyst
+                    )
+                    t2 = Task(
+                        description=f"{item}의 예측 결과에 따른 구체적인 구매 대응 전략(구매 시점, 재고 확보 물량 등)을 제안하세요.",
+                        expected_output=f"{item} 구매 가이드",
+                        agent=procurement
+                    )
                     
                     crew = Crew(agents=[analyst, procurement], tasks=[t1, t2], max_rpm=10, verbose=True)
                     
@@ -157,18 +174,19 @@ if df_raw is not None:
                         report_out = crew.kickoff()
                         all_reports.append(report_out.raw)
                     except Exception as e:
-                        st.error(f"❌ {item} 분석 중 오류 발생: {e}")
-                        all_reports.append(f"### {item}\n분석 중 오류가 발생했습니다.")
+                        # 개별 품목 에러 발생 시 건너뛰고 계속 진행
+                        st.warning(f"⚠️ {item} 분석 중 일시적인 에러가 발생했습니다: {str(e)}")
+                        all_reports.append(f"### {item}\n분석 중 에러가 발생하여 생략되었습니다.")
                     
-                    time.sleep(1)
+                    time.sleep(1) # 안정성을 위한 휴식
                     progress_bar.progress((idx + 1) / len(critical_items))
 
                 final_report_md = f"# 📑 구매부서 종합 이슈 보고서 ({datetime.date.today()})\n\n"
-                final_report_md += f"본 보고서는 Gemini 엔진을 통해 총 **{len(critical_items)}개** 품목을 분석했습니다.\n\n"
+                final_report_md += f"본 보고서는 Gemini 엔진을 통해 총 **{len(critical_items)}개** 이슈 품목을 정밀 분석했습니다.\n\n"
                 final_report_md += "\n\n---\n\n".join(all_reports)
                 
-                status.update(label="✅ Gemini 분석 완료!", state="complete", expanded=False)
+                status.update(label="✅ 모든 품목 Gemini 분석 완료!", state="complete", expanded=False)
 
             st.markdown(final_report_md)
             docx_file = markdown_to_docx_stream(final_report_md)
-            st.download_button(label="📄 Gemini 전문 보고서 다운로드 (Word)", data=docx_file, file_name=f"Market_Report_{datetime.date.today()}.docx")
+            st.download_button(label="📄 Gemini 전문 보고서 다운로드 (Word)", data=docx_file, file_name=f"Full_Market_Report_{datetime.date.today()}.docx")
