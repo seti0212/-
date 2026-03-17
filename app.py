@@ -57,7 +57,7 @@ def markdown_to_docx_stream(markdown_text):
 df_raw = load_data()
 
 # ============================================================================
-# 2. 통계 계산 및 전체 이슈 품목 추출
+# 2. 통계 계산 및 전체 이슈 품목 추출 (주/월/연 각 2개씩 선정)
 # ============================================================================
 def calculate_all_stats(df):
     df = df.copy()
@@ -73,12 +73,17 @@ def calculate_all_stats(df):
     return get_stats(df, '연주'), get_stats(df, '연월'), get_stats(df, '연도')
 
 def get_critical_items(w_df, m_df, y_df):
-    w_top = w_df[w_df['기간'] == w_df['기간'].max()].nlargest(5, '증감률')['품목'].tolist()
-    w_bot = w_df[w_df['기간'] == w_df['기간'].max()].nsmallest(5, '증감률')['품목'].tolist()
-    m_top = m_df[m_df['기간'] == m_df['기간'].max()].nlargest(5, '증감률')['품목'].tolist()
-    m_bot = m_df[m_df['기간'] == m_df['기간'].max()].nsmallest(5, '증감률')['품목'].tolist()
-    y_top = y_df[y_df['기간'] == y_df['기간'].max()].nlargest(5, '증감률')['품목'].tolist()
-    y_bot = y_df[y_df['기간'] == y_df['기간'].max()].nsmallest(5, '증감률')['품목'].tolist()
+    # 각 기간별로 가장 많이 오른 품목 1개, 가장 많이 내린 품목 1개씩 선정 (총 2개씩)
+    w_top = w_df[w_df['기간'] == w_df['기간'].max()].nlargest(1, '증감률')['품목'].tolist()
+    w_bot = w_df[w_df['기간'] == w_df['기간'].max()].nsmallest(1, '증감률')['품목'].tolist()
+    
+    m_top = m_df[m_df['기간'] == m_df['기간'].max()].nlargest(1, '증감률')['품목'].tolist()
+    m_bot = m_df[m_df['기간'] == m_df['기간'].max()].nsmallest(1, '증감률')['품목'].tolist()
+    
+    y_top = y_df[y_df['기간'] == y_df['기간'].max()].nlargest(1, '증감률')['품목'].tolist()
+    y_bot = y_df[y_df['기간'] == y_df['기간'].max()].nsmallest(1, '증감률')['품목'].tolist()
+    
+    # 리스트 통합 및 중복 제거 (최대 6개 품목)
     return list(set(w_top + w_bot + m_top + m_bot + y_top + y_bot))
 
 # ============================================================================
@@ -103,20 +108,20 @@ if df_raw is not None:
         st.divider()
 
     # ============================================================================
-    # 4. 전문 AI 분석 섹션 (429 에러 방지 및 자동 재시도 로직)
+    # 4. 전문 AI 분석 섹션 (분석 대상 압축 및 안정화 로직 유지)
     # ============================================================================
     st.header("📝 이슈 구매 품목 종합 보고서 (Gemini 2.0)")
     critical_items = get_critical_items(weekly_df, monthly_df, yearly_df)
-    st.write(f"🔔 **전체 분석 대상 ({len(critical_items)}개 품목):** {', '.join(critical_items)}")
+    st.write(f"🔔 **AI 정밀 분석 대상 (핵심 {len(critical_items)}개 품목):** {', '.join(critical_items)}")
 
-    if st.button("🔥 전체 품목 정밀 분석 시작"):
+    if st.button("🔥 핵심 품목 정밀 분석 시작"):
         if not os.environ.get("GEMINI_API_KEY"):
             st.error("🚨 API 키가 설정되지 않았습니다.")
         else:
             search_tool = SerperDevTool()
             gemini_llm = LLM(model="gemini/gemini-2.0-flash", api_key=os.environ["GEMINI_API_KEY"])
 
-            with st.status("품목별 순차 분석 진행 중... (사용량 한도 준수를 위해 천천히 진행됩니다)", expanded=True) as status:
+            with st.status("핵심 품목 순차 분석 중...", expanded=True) as status:
                 analyst = Agent(role="시장 예측가", goal="뉴스 기반 단가 예측", backstory="데이터 분석가", llm=gemini_llm, tools=[search_tool])
                 procurement = Agent(role="구매 전략가", goal="전략 수립", backstory="구매 전문가", llm=gemini_llm)
 
@@ -128,20 +133,19 @@ if df_raw is not None:
                     
                     t1 = Task(description=f"{item}의 최신 뉴스 기반 3개월 단가 예측", expected_output="원인/예측", agent=analyst)
                     t2 = Task(description=f"{item} 구매 전략 제안", expected_output="전략", agent=procurement)
-                    crew = Crew(agents=[analyst, procurement], tasks=[t1, t2], max_rpm=1) # RPM을 1로 극도로 낮춰 안정성 확보
+                    crew = Crew(agents=[analyst, procurement], tasks=[t1, t2], max_rpm=1)
 
-                    # --- 재시도(Retry) 로직 시작 ---
                     success = False
-                    for attempt in range(3): # 최대 3번 시도
+                    for attempt in range(3):
                         try:
                             report_out = crew.kickoff()
                             all_reports.append(report_out.raw)
                             success = True
-                            break # 성공 시 루프 탈출
+                            break
                         except Exception as e:
                             if "429" in str(e):
                                 wait_time = 15 * (attempt + 1)
-                                st.warning(f"⏳ 사용량 한도 초과! {wait_time}초 후 다시 시도합니다... (시도 {attempt+1}/3)")
+                                st.warning(f"⏳ 사용량 한도 초과! {wait_time}초 후 다시 시도합니다... ({attempt+1}/3)")
                                 time.sleep(wait_time)
                             else:
                                 st.error(f"❌ {item} 오류: {str(e)}")
@@ -150,13 +154,12 @@ if df_raw is not None:
                     if not success:
                         all_reports.append(f"### {item}\n분석 한도 초과로 리포트 생성에 실패했습니다.")
                     
-                    # 다음 품목 분석 전 무조건 7초 휴식 (안전 장치)
                     time.sleep(7)
                     progress_bar.progress((idx + 1) / len(critical_items))
 
-                final_report_md = f"# 📑 구매 종합 보고서 ({datetime.date.today()})\n\n" + "\n\n---\n\n".join(all_reports)
-                status.update(label="✅ 전체 품목 분석 완료!", state="complete", expanded=False)
+                final_report_md = f"# 📑 핵심 품목 구매 종합 보고서 ({datetime.date.today()})\n\n" + "\n\n---\n\n".join(all_reports)
+                status.update(label="✅ 핵심 품목 분석 완료!", state="complete", expanded=False)
 
             st.markdown(final_report_md)
             docx_file = markdown_to_docx_stream(final_report_md)
-            st.download_button(label="📄 Word 다운로드", data=docx_file, file_name=f"Market_Report_{datetime.date.today()}.docx")
+            st.download_button(label="📄 Word 다운로드", data=docx_file, file_name=f"Critical_Market_Report_{datetime.date.today()}.docx")
