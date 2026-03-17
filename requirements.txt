@@ -1,5 +1,6 @@
 streamlit
 pandas
-python-docx
 crewai
-pysqlite3-binary
+crewai-tools
+python-dotenv
+python-docx
