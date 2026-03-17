@@ -136,51 +136,103 @@ if df_raw is not None:
         st.subheader("📂 연간 하락")
         st.dataframe(format_df(yearly_df[yearly_df['기간'] == yearly_df['기간'].max()].nsmallest(5, '증감률')), use_container_width=True, hide_index=True)
 
-    # ============================================================================
-    # 4. 전문 AI 에이전트 분석 섹션
-    # ============================================================================
-    st.divider()
-    st.header("📝 구매부서 전용 심층 마켓 보고서 (AI)")
+# ============================================================================
+# 4. 전문 AI 에이전트 분석 섹션 (이슈 품목 자동 선정 로직 강화)
+# ============================================================================
+st.divider()
+st.header("📝 구매부서 전용 심층 마켓 보고서 (AI)")
 
-    # 분석 대상 선정: 주간 상승률 상위 품목
-    top_items = weekly_df[weekly_df['기간'] == weekly_df['기간'].max()].nlargest(3, '증감률')['품목'].tolist()
+# --- [로직 개선] 분석 대상 선정: 주/월/연 상승 및 하락 품목 중 핵심 추출 ---
+def get_critical_items(w_df, m_df, y_df):
+    # 각 카테고리별로 상위/하위 품목 추출 (중복 허용하여 리스트업)
+    w_top = w_df[w_df['기간'] == w_df['기간'].max()].nlargest(3, '증감률')['품목'].tolist()
+    w_bot = w_df[w_df['기간'] == w_df['기간'].max()].nsmallest(3, '증감률')['품목'].tolist()
+    
+    m_top = m_df[m_df['기간'] == m_df['기간'].max()].nlargest(2, '증감률')['품목'].tolist()
+    m_bot = m_df[m_df['기간'] == m_df['기간'].max()].nsmallest(2, '증감률')['품목'].tolist()
+    
+    y_top = y_df[y_df['기간'] == y_df['기간'].max()].nlargest(2, '증감률')['품목'].tolist()
+    
+    # 전체를 합친 후 중복 제거 (Set 활용)
+    combined_items = list(set(w_top + w_bot + m_top + m_bot + y_top))
+    return combined_items
 
-    if st.button("🔥 전문 AI 팀 분석 시작"):
-        if not os.environ.get("OPENAI_API_KEY"):
-            st.error("사이드바에 OpenAI API Key를 입력하거나 Secrets를 설정해주세요.")
-        else:
-            with st.status("전문 분석팀이 작동 중입니다...", expanded=True) as status:
-                # 1. 에이전트 설정
-                analyst = Agent(
-                    role="시장 변동 원인분석 전문가",
-                    goal="가격 변동의 원인을 5대 지표(공급, 수요, 환경, 유통, 연관시장) 관점에서 분석",
-                    backstory="15년 경력의 베테랑 시장 분석가입니다.",
-                    llm=LLM(model="gpt-4o"),
-                    verbose=True
-                )
-                procurement = Agent(
-                    role="구매 인사이트 전문가",
-                    goal="분석 결과를 바탕으로 구매 대응 전략 수립",
-                    backstory="대기업 원료 구매팀장 출신입니다.",
-                    llm=LLM(model="gpt-4o"),
-                    verbose=True
-                )
+critical_items = get_critical_items(weekly_df, monthly_df, yearly_df)
 
-                all_reports = []
-                for item in top_items:
-                    st.write(f"🔍 **{item}** 정밀 분석 중...")
-                    t1 = Task(description=f"{item}의 최근 시세 급등 원인을 정밀 분석하세요.", expected_output="원인 분석 보고서", agent=analyst)
-                    t2 = Task(description=f"분석된 내용을 토대로 {item} 구매 대응 가이드를 작성하세요.", expected_output="구매 가이드", agent=procurement)
-                    
-                    crew = Crew(agents=[analyst, procurement], tasks=[t1, t2])
-                    report_out = crew.kickoff()
-                    all_reports.append(report_out.raw)
+st.write(f"🔔 **AI 분석 대상 후보:** {', '.join(critical_items)}")
+st.caption("※ 주간/월간/연간 변동폭이 큰 품목들을 중심으로 AI가 종합 분석을 수행합니다.")
 
-                final_report_md = "# 📑 구매부서 종합 시장 분석 보고서\n\n" + "\n\n---\n\n".join(all_reports)
-                status.update(label="✅ 분석 완료!", state="complete", expanded=False)
-
-            st.markdown(final_report_md)
+if st.button("🔥 전문 AI 팀 분석 시작"):
+    if not os.environ.get("OPENAI_API_KEY"):
+        st.error("사이드바에 OpenAI API Key를 입력하거나 Secrets를 설정해주세요.")
+    else:
+        with st.status("전문 분석팀이 기간별 변동 추이를 추적 중입니다...", expanded=True) as status:
+            # 1. 에이전트 설정 (페르소나 강화)
+            analyst = Agent(
+                role="농축수산물 시장 및 거시경제 분석가",
+                goal="주간/월간/연간 시세 변동 데이터를 기반으로 가격 급등락의 근본 원인을 분석",
+                backstory="당신은 단기적인 수급 불균형뿐만 아니라 장기적인 트렌드(연간 추세)까지 분석하는 20년 경력의 수석 분석가입니다.",
+                llm=LLM(model="gpt-4o"),
+                verbose=True
+            )
             
-            # 다운로드 버튼
-            docx_file = markdown_to_docx_stream(final_report_md)
-            st.download_button(label="📄 Word 보고서 다운로드", data=docx_file, file_name=f"Report_{datetime.date.today()}.docx")
+            procurement = Agent(
+                role="전략적 구매 의사결정 전문가",
+                goal="시장 분석 보고서를 바탕으로 구매 시점 결정 및 리스크 관리 전략 수립",
+                backstory="당신은 가격이 하락할 때는 매수 적기를, 급등할 때는 대체재 확보 시점을 판단하는 구매 전략가입니다.",
+                llm=LLM(model="gpt-4o"),
+                verbose=True
+            )
+
+            all_reports = []
+            
+            # 선정된 핵심 이슈 품목들을 순회하며 분석
+            for item in critical_items:
+                st.write(f"🔍 **{item}** (복합 기간 변동성 추적 중...)")
+                
+                # 태스크 1: 원인 분석 (기간별 맥락 포함)
+                t1 = Task(
+                    description=f"""
+                    품목: {item}
+                    대상 데이터: 주간/월간/연간 변동 TOP 리스트에 포함된 이슈 품목입니다.
+                    작업: 이 품목의 최근 시세 흐름(급등 혹은 급락)이 발생하는 근본 원인을 5대 지표(공급, 수요, 기후/환경, 유통구조, 연관시장) 관점에서 분석하세요. 
+                    특히 일시적인 변동인지, 장기적인 구조적 변화인지 구분하여 설명하세요.
+                    """,
+                    expected_output=f"{item}의 기간별 변동 원인 분석 보고서",
+                    agent=analyst
+                )
+                
+                # 태스크 2: 구매 전략 (So What?)
+                t2 = Task(
+                    description=f"""
+                    시장 분석 결과에 따라 {item}에 대한 구매 대응 가이드를 작성하세요.
+                    - 가격 상승세인 경우: 추가 상승 가능성 및 선매수 여부 판단
+                    - 가격 하락세인 경우: 바닥 시점 예측 및 매수 타이밍 조언
+                    - 공통: 구매 담당자가 매일 체크해야 할 '핵심 모니터링 지표' 제시
+                    """,
+                    expected_output=f"{item} 구매 전략 제안서",
+                    agent=procurement
+                )
+                
+                crew = Crew(agents=[analyst, procurement], tasks=[t1, t2])
+                report_out = crew.kickoff()
+                all_reports.append(report_out.raw)
+
+            # 최종 보고서 통합
+            final_report_md = f"# 📑 구매부서 종합 마켓 이슈 보고서 ({datetime.date.today()})\n\n"
+            final_report_md += "## 🎯 이번 주 핵심 분석 품목 요약\n"
+            final_report_md += f"본 보고서는 주간/월간/연간 변동성이 가장 컸던 **{', '.join(critical_items)}** 품목을 집중 분석했습니다.\n\n"
+            final_report_md += "\n\n---\n\n".join(all_reports)
+            
+            status.update(label="✅ 분석 및 전략 수립 완료!", state="complete", expanded=False)
+
+        # 결과 출력 및 다운로드 버튼
+        st.markdown(final_report_md)
+        
+        docx_file = markdown_to_docx_stream(final_report_md)
+        st.download_button(
+            label="📄 전문 분석 보고서 다운로드 (Word)", 
+            data=docx_file, 
+            file_name=f"Market_Analysis_Report_{datetime.date.today()}.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
