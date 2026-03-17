@@ -4,3 +4,4 @@ crewai
 crewai-tools
 python-docx
 google-generativeai
+langchain-google-genai
