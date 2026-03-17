@@ -15,7 +15,10 @@ from crewai import Agent, Task, Crew, LLM
 st.set_page_config(page_title="구매지원팀 시세 분석 시스템", layout="wide")
 
 # OpenAI API 키 설정
-os.environ["OPENAI_API_KEY"] = "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"
+if "OPENAI_API_KEY" in st.secrets:
+    os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
+else:
+    st.error("⚠️ Streamlit Secrets에 API 키가 설정되지 않았습니다.")
 
 # 구글 스프레드시트 게시용 URL
 url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vST3eDNhF1GLc231d4RdAnSCb8DnSznnZ4lJfPxxmtIHIcuEXbvFmrBI9LRdbURog-ik09vSOHTOAMp/pub?output=csv"
