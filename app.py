@@ -107,7 +107,7 @@ if df_raw is not None:
     # ============================================================================
     # 4. 전문 AI 분석 섹션 (1년치 분기별 예측 강화)
     # ============================================================================
-    st.header("🔮 1년 전망 단가 예측 보고서 (Gemini 2.5 Flash)")
+    st.header(" 단가 예측 보고서 (Gemini 2.5 Flash)")
     critical_items = get_critical_items(weekly_df, monthly_df, yearly_df)
     
     today_str = datetime.date.today().strftime('%Y년 %m월 %d일')
@@ -142,7 +142,7 @@ if df_raw is not None:
                 progress_bar = st.progress(0)
                 
                 for idx, item in enumerate(critical_items):
-                    st.write(f"🔮 **{item}** 1년 전망 분석 중... ({idx+1}/{len(critical_items)})")
+                    st.write(f" **{item}** 전망 분석 중... ({idx+1}/{len(critical_items)})")
                     
                     t1 = Task(
                         description=f"""
