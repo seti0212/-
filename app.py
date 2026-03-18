@@ -30,9 +30,8 @@ url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vST3eDNhF1GLc231d4RdAnSCb
 def load_data():
     try:
         data = pd.read_csv(url)
-        # [핵심 수정] 특정 품목명을 가독성 좋게 변경
+        # 특정 품목명을 가독성 좋게 변경
         data['품목'] = data['품목'].replace('가수분해소고기농축물(호주)', '호주산 쇠고기 (가수분해농축물)')
-        
         data['날짜'] = pd.to_datetime(data['날짜'])
         return data.sort_values(['품목', '날짜'])
     except Exception as e:
@@ -106,36 +105,36 @@ if df_raw is not None:
         st.divider()
 
     # ============================================================================
-    # 4. 전문 AI 분석 섹션 (미래 예측 기능 유지)
+    # 4. 전문 AI 분석 섹션 (1년치 분기별 예측 강화)
     # ============================================================================
-    st.header("🔮 미래 단가 예측 전문 보고서 (Gemini 2.5 Flash)")
+    st.header("🔮 1년 전망 단가 예측 보고서 (Gemini 2.5 Flash)")
     critical_items = get_critical_items(weekly_df, monthly_df, yearly_df)
     
     today_str = datetime.date.today().strftime('%Y년 %m월 %d일')
-    future_target = (datetime.date.today() + datetime.timedelta(days=120)).strftime('%Y년 %m월')
+    future_limit = (datetime.date.today() + datetime.timedelta(days=365)).strftime('%Y년 %m월')
 
-    st.write(f"🔔 **AI 미래 예측 대상:** {', '.join(critical_items)}")
-    st.caption(f"※ {today_str} 기준 정보를 바탕으로 **{future_target}까지의 미래 시세**를 예측합니다.")
+    st.write(f"🔔 **AI 예측 대상:** {', '.join(critical_items)}")
+    st.caption(f"※ {today_str} 기준 정보를 바탕으로 **{future_limit}까지의 향후 1년 시세**를 분기별로 예측합니다.")
 
-    if st.button("🚀 미래 단가 예측 시작"):
+    if st.button("🚀 1년 단가 예측 시작"):
         if not os.environ.get("GEMINI_API_KEY"):
             st.error("🚨 API 키가 설정되지 않았습니다.")
         else:
             search_tool = SerperDevTool()
             gemini_llm = LLM(model="gemini/gemini-2.5-flash", api_key=os.environ["GEMINI_API_KEY"])
 
-            with st.status("미래 시장 시나리오 분석 중...", expanded=True) as status:
+            with st.status("향후 1개년 시장 시나리오 분석 중...", expanded=True) as status:
                 analyst = Agent(
-                    role="미래 시장 수급 예측가", 
-                    goal=f"오늘({today_str}) 이후의 뉴스 및 기후 데이터를 분석하여 향후 3~6개월의 단가를 예측", 
-                    backstory="당신은 과거의 수치보다 미래의 변동 가능성에 집중합니다. 현재 발생한 사건이 미래의 어느 시점에 가격으로 반영될지를 정확히 짚어냅니다.", 
+                    role="장기 시장 수급 예측가", 
+                    goal=f"오늘({today_str}) 이후의 데이터를 분석하여 향후 1년(4개 분기)의 단가 흐름을 예측", 
+                    backstory="당신은 글로벌 수급 트렌드를 읽어내는 베테랑 분석가입니다. 단기적인 변동보다 향후 1년간의 분기별 단가 추이를 예측하는 데 특화되어 있습니다.", 
                     llm=gemini_llm, 
                     tools=[search_tool]
                 )
                 procurement = Agent(
-                    role="전략적 미래 구매 설계자", 
-                    goal="예측된 미래 단가에 따른 최적의 선매수 및 재고 확보 시점 제안", 
-                    backstory="당신은 미래 단가 상승이 예상될 때 지금 바로 사야 할 양을 정하고, 하락이 예상될 때 구매를 늦추는 타이밍의 대가입니다.", 
+                    role="전략적 연간 구매 설계자", 
+                    goal="예측된 1년치 단가 추이에 따른 분기별 최적 구매 로드맵 제안", 
+                    backstory="당신은 1년치 예산을 효율적으로 집행하기 위해 어느 분기에 대량 매수를 하고 어느 분기에 관망해야 할지를 결정하는 구매 전략의 대가입니다.", 
                     llm=gemini_llm
                 )
 
@@ -143,29 +142,29 @@ if df_raw is not None:
                 progress_bar = st.progress(0)
                 
                 for idx, item in enumerate(critical_items):
-                    st.write(f"🔮 **{item}** 미래 전망 분석 중... ({idx+1}/{len(critical_items)})")
+                    st.write(f"🔮 **{item}** 1년 전망 분석 중... ({idx+1}/{len(critical_items)})")
                     
                     t1 = Task(
                         description=f"""
                         품목: {item}
                         현재 날짜: {today_str}
                         미션: 
-                        1. 오늘 이후의 최신 뉴스(기후, 전쟁, 정책 등)를 검색하여 {item}의 미래 시세를 분석하세요.
-                        2. **[미래 시나리오]** 섹션을 만들어 향후 단가 흐름을 월별 혹은 분기별로 예측하세요.
-                        3. 과거 데이터 요약은 최소화하고, '앞으로 일어날 일'과 그로 인한 '미래 가격 범위'를 예측값으로 제시하세요.
+                        1. 오늘 이후의 최신 뉴스 및 시장 동향을 검색하여 {item}의 향후 1년(4개 분기) 시세를 분석하세요.
+                        2. **[1년 분기별 시나리오]** 섹션을 만들어 각 분기별(예: 2026년 Q2, Q3, Q4, 2027년 Q1)로 단가 흐름을 구체적으로 예측하세요.
+                        3. '앞으로 일어날 주요 이벤트'가 각 분기 가격에 어떤 영향을 줄지 설명하세요.
                         """, 
-                        expected_output=f"{item}의 미래 단가 변동 시나리오 및 예측 시점 보고서", 
+                        expected_output=f"{item}의 향후 1년 분기별 단가 변동 시나리오 보고서", 
                         agent=analyst
                     )
                     
                     t2 = Task(
                         description=f"""
-                        위의 {item} 미래 예측 결과를 바탕으로 구매 전략을 수립하세요.
-                        - **구매 적기**: 구체적인 미래 시점(예: 2026년 8월 등)을 제안하세요.
-                        - **재고 전략**: 미래 가격 변동폭에 따른 물량 확보 비중을 제안하세요.
-                        - **위기 알림**: 예측이 빗나갈 수 있는 변수를 지정하세요.
+                        위의 {item} 1년 예측 결과를 바탕으로 연간 구매 전략을 수립하세요.
+                        - **분기별 구매 로드맵**: 각 분기별로 '공격적 매수', '안정적 확보', '구매 대기' 중 하나를 선택하고 이유를 적으세요.
+                        - **최적 매수 타이밍**: 1년 중 단가가 가장 저렴할 것으로 예상되는 '골든 타임'을 콕 짚어주세요.
+                        - **리스크 변수**: 향후 1년간 주의해야 할 외부 변수를 지정하세요.
                         """, 
-                        expected_output=f"{item}의 미래 대비 구매 실행 가이드", 
+                        expected_output=f"{item}의 향후 1년 구매 실행 로드맵", 
                         agent=procurement
                     )
                     
@@ -185,14 +184,19 @@ if df_raw is not None:
                                 break
                     
                     if not success:
-                        all_reports.append(f"### {item}\n분석 한도 초과로 미래 리포트 생성에 실패했습니다.")
+                        all_reports.append(f"### {item}\n분석 한도 초과로 1년 리포트 생성에 실패했습니다.")
                     
                     time.sleep(7)
                     progress_bar.progress((idx + 1) / len(critical_items))
 
-                final_report_md = f"# 📑 [전략보고] 미래 단가 예측 및 구매 로드맵 ({today_str} 발행)\n\n" + "\n\n---\n\n".join(all_reports)
-                status.update(label="✅ 모든 핵심 품목 미래 예측 완료!", state="complete", expanded=False)
+                # [중요] 보고서 통합 및 취소선(~~) 제거 처리
+                final_report_md = f"# 📑 [연간전략] 1년 단가 예측 및 구매 로드맵 ({today_str} 발행)\n\n" + "\n\n---\n\n".join(all_reports)
+                
+                # 마크다운 취소선 문법인 '~~'를 아예 제거하여 텍스트가 지워지는 현상 방지
+                final_report_md = final_report_md.replace('~~', '')
+                
+                status.update(label="✅ 모든 핵심 품목 1년 예측 완료!", state="complete", expanded=False)
 
             st.markdown(final_report_md)
             docx_file = markdown_to_docx_stream(final_report_md)
-            st.download_button(label="📄 미래 예측 보고서 다운로드 (Word)", data=docx_file, file_name=f"Future_Prediction_Report_{datetime.date.today()}.docx")
+            st.download_button(label="📄 1년 예측 보고서 다운로드 (Word)", data=docx_file, file_name=f"Annual_Prediction_Report_{datetime.date.today()}.docx")
