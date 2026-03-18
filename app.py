@@ -73,16 +73,12 @@ def calculate_all_stats(df):
     return get_stats(df, '연주'), get_stats(df, '연월'), get_stats(df, '연도')
 
 def get_critical_items(w_df, m_df, y_df):
-    # 각 기간별로 가장 많이 오른 품목 1개, 가장 많이 내린 품목 1개씩 선정 (총 2개씩)
     w_top = w_df[w_df['기간'] == w_df['기간'].max()].nlargest(1, '증감률')['품목'].tolist()
     w_bot = w_df[w_df['기간'] == w_df['기간'].max()].nsmallest(1, '증감률')['품목'].tolist()
-    
     m_top = m_df[m_df['기간'] == m_df['기간'].max()].nlargest(1, '증감률')['품목'].tolist()
     m_bot = m_df[m_df['기간'] == m_df['기간'].max()].nsmallest(1, '증감률')['품목'].tolist()
-    
     y_top = y_df[y_df['기간'] == y_df['기간'].max()].nlargest(1, '증감률')['품목'].tolist()
     y_bot = y_df[y_df['기간'] == y_df['기간'].max()].nsmallest(1, '증감률')['품목'].tolist()
-    
     return list(set(w_top + w_bot + m_top + m_bot + y_top + y_bot))
 
 # ============================================================================
@@ -107,32 +103,73 @@ if df_raw is not None:
         st.divider()
 
     # ============================================================================
-    # 4. 전문 AI 분석 섹션 (Gemini 2.5 Flash 적용)
+    # 4. 전문 AI 분석 섹션 (미래 예측 기능 대폭 강화)
     # ============================================================================
-    st.header("📝 이슈 구매 품목 종합 보고서 (Gemini 2.5 Flash)")
+    st.header("🔮 미래 단가 예측 전문 보고서 (Gemini 2.5 Flash)")
     critical_items = get_critical_items(weekly_df, monthly_df, yearly_df)
-    st.write(f"🔔 **AI 정밀 분석 대상 (핵심 {len(critical_items)}개 품목):** {', '.join(critical_items)}")
+    
+    # 오늘 날짜와 미래 예측 시점 계산
+    today_str = datetime.date.today().strftime('%Y년 %m월 %d일')
+    future_target = (datetime.date.today() + datetime.timedelta(days=120)).strftime('%Y년 %m월')
 
-    if st.button("🔥 핵심 품목 정밀 분석 시작"):
+    st.write(f"🔔 **AI 미래 예측 대상:** {', '.join(critical_items)}")
+    st.caption(f"※ {today_str} 기준 정보를 바탕으로 **{future_target}까지의 미래 시세**를 예측합니다.")
+
+    if st.button("🚀 미래 단가 예측 시작"):
         if not os.environ.get("GEMINI_API_KEY"):
             st.error("🚨 API 키가 설정되지 않았습니다.")
         else:
             search_tool = SerperDevTool()
-            # 모델명을 gemini/gemini-2.5-flash로 설정
             gemini_llm = LLM(model="gemini/gemini-2.5-flash", api_key=os.environ["GEMINI_API_KEY"])
 
-            with st.status("Gemini 2.5 분석팀이 가동 중입니다...", expanded=True) as status:
-                analyst = Agent(role="시장 예측가", goal="뉴스 기반 단가 예측", backstory="데이터 분석가", llm=gemini_llm, tools=[search_tool])
-                procurement = Agent(role="구매 전략가", goal="전략 수립", backstory="구매 전문가", llm=gemini_llm)
+            with st.status("미래 시장 시나리오 분석 중...", expanded=True) as status:
+                # 에이전트의 페르소나에 '미래 예측' 임무 강조
+                analyst = Agent(
+                    role="미래 시장 수급 예측가", 
+                    goal=f"오늘({today_str}) 이후의 뉴스 및 기후 데이터를 분석하여 향후 3~6개월의 단가를 예측", 
+                    backstory="당신은 과거의 수치보다 미래의 변동 가능성에 집중합니다. 현재 발생한 사건이 미래의 어느 시점에 가격으로 반영될지를 정확히 짚어냅니다.", 
+                    llm=gemini_llm, 
+                    tools=[search_tool]
+                )
+                procurement = Agent(
+                    role="전략적 미래 구매 설계자", 
+                    goal="예측된 미래 단가에 따른 최적의 선매수 및 재고 확보 시점 제안", 
+                    backstory="당신은 미래 단가 상승이 예상될 때 지금 바로 사야 할 양을 정하고, 하락이 예상될 때 구매를 늦추는 타이밍의 대가입니다.", 
+                    llm=gemini_llm
+                )
 
                 all_reports = []
                 progress_bar = st.progress(0)
                 
                 for idx, item in enumerate(critical_items):
-                    st.write(f"🔍 **{item}** 분석 중... ({idx+1}/{len(critical_items)})")
+                    st.write(f"🔮 **{item}** 미래 전망 분석 중... ({idx+1}/{len(critical_items)})")
                     
-                    t1 = Task(description=f"{item}의 최신 뉴스 기반 3개월 단가 예측", expected_output="원인/예측", agent=analyst)
-                    t2 = Task(description=f"{item} 구매 전략 제안", expected_output="전략", agent=procurement)
+                    # 태스크 1: 미래 시점의 구체적 가격대 및 원인 예측
+                    t1 = Task(
+                        description=f"""
+                        품목: {item}
+                        현재 날짜: {today_str}
+                        미션: 
+                        1. 오늘 이후의 최신 뉴스(기후, 전쟁, 정책 등)를 검색하여 {item}의 미래 시세를 분석하세요.
+                        2. **[미래 시나리오]** 섹션을 만들어 2026년 하반기까지의 단가 흐름을 월별 혹은 분기별로 예측하세요.
+                        3. 과거 데이터 요약은 최소화하고, '앞으로 일어날 일'과 그로 인한 '미래 가격 범위'를 예측값으로 제시하세요.
+                        """, 
+                        expected_output=f"{item}의 미래 단가 변동 시나리오 및 예측 시점 보고서", 
+                        agent=analyst
+                    )
+                    
+                    # 태스크 2: 미래 시점 대비 구매 전략
+                    t2 = Task(
+                        description=f"""
+                        위의 {item} 미래 예측 결과를 바탕으로 구매 전략을 수립하세요.
+                        - **구매 적기**: [예: 2026년 6월 중순 이전 완료 추천]
+                        - **재고 전략**: 미래 가격 급등이 예상되면 현시점 선매수 비중을 얼마나 늘릴지 결정하세요.
+                        - **위기 알림**: 예측이 빗나갈 수 있는 변수(Black Swan)를 지정하세요.
+                        """, 
+                        expected_output=f"{item}의 미래 대비 구매 실행 가이드", 
+                        agent=procurement
+                    )
+                    
                     crew = Crew(agents=[analyst, procurement], tasks=[t1, t2], max_rpm=1)
 
                     success = False
@@ -144,23 +181,19 @@ if df_raw is not None:
                             break
                         except Exception as e:
                             if "429" in str(e):
-                                wait_time = 15 * (attempt + 1)
-                                st.warning(f"⏳ 과부하 방지를 위해 {wait_time}초 후 재시도합니다... ({attempt+1}/3)")
-                                time.sleep(wait_time)
+                                time.sleep(15 * (attempt + 1))
                             else:
-                                st.error(f"❌ {item} 오류: {str(e)}")
                                 break
                     
                     if not success:
-                        all_reports.append(f"### {item}\n분석 한도 초과 또는 에러로 리포트 생성에 실패했습니다.")
+                        all_reports.append(f"### {item}\n분석 한도 초과로 미래 리포트 생성에 실패했습니다.")
                     
-                    # API 안정성을 위한 휴식
                     time.sleep(7)
                     progress_bar.progress((idx + 1) / len(critical_items))
 
-                final_report_md = f"# 📑 핵심 품목 구매 종합 보고서 ({datetime.date.today()})\n\n" + "\n\n---\n\n".join(all_reports)
-                status.update(label="✅ 핵심 품목 분석 완료!", state="complete", expanded=False)
+                final_report_md = f"# 📑 [전략보고] 미래 단가 예측 및 구매 로드맵 ({today_str} 발행)\n\n" + "\n\n---\n\n".join(all_reports)
+                status.update(label="✅ 모든 핵심 품목 미래 예측 완료!", state="complete", expanded=False)
 
             st.markdown(final_report_md)
             docx_file = markdown_to_docx_stream(final_report_md)
-            st.download_button(label="📄 Word 다운로드", data=docx_file, file_name=f"Critical_Market_Report_{datetime.date.today()}.docx")
+            st.download_button(label="📄 미래 예측 보고서 다운로드 (Word)", data=docx_file, file_name=f"Future_Prediction_Report_{datetime.date.today()}.docx")
