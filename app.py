@@ -142,7 +142,7 @@ if df_raw is not None:
                 progress_bar = st.progress(0)
                 
                 for idx, item in enumerate(critical_items):
-                    st.write(f"🔮 **{item}** 미래 전망 분석 중... ({idx+1}/{len(critical_items)})")
+                    st.write(f" **{item}** 전망 분석 중... ({idx+1}/{len(critical_items)})")
                     
                     # 태스크 1: 미래 시점의 구체적 가격대 및 원인 예측
                     t1 = Task(
