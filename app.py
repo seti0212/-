@@ -105,24 +105,24 @@ if df_raw is not None:
     # ============================================================================
     # 4. 전문 AI 분석 섹션 (미래 예측 기능 대폭 강화)
     # ============================================================================
-    st.header("🔮 미래 단가 예측 전문 보고서 (Gemini 2.5 Flash)")
+    st.header("단가 예측 전문 보고서 (Gemini 2.5 Flash)")
     critical_items = get_critical_items(weekly_df, monthly_df, yearly_df)
     
     # 오늘 날짜와 미래 예측 시점 계산
     today_str = datetime.date.today().strftime('%Y년 %m월 %d일')
     future_target = (datetime.date.today() + datetime.timedelta(days=120)).strftime('%Y년 %m월')
 
-    st.write(f"🔔 **AI 미래 예측 대상:** {', '.join(critical_items)}")
+    st.write(f"🔔 **AI 예측 대상:** {', '.join(critical_items)}")
     st.caption(f"※ {today_str} 기준 정보를 바탕으로 **{future_target}까지의 미래 시세**를 예측합니다.")
 
-    if st.button("🚀 미래 단가 예측 시작"):
+    if st.button("단가 예측 시작"):
         if not os.environ.get("GEMINI_API_KEY"):
             st.error("🚨 API 키가 설정되지 않았습니다.")
         else:
             search_tool = SerperDevTool()
             gemini_llm = LLM(model="gemini/gemini-2.5-flash", api_key=os.environ["GEMINI_API_KEY"])
 
-            with st.status("미래 시장 시나리오 분석 중...", expanded=True) as status:
+            with st.status("시장 분석 중...", expanded=True) as status:
                 # 에이전트의 페르소나에 '미래 예측' 임무 강조
                 analyst = Agent(
                     role="미래 시장 수급 예측가", 
@@ -151,7 +151,7 @@ if df_raw is not None:
                         현재 날짜: {today_str}
                         미션: 
                         1. 오늘 이후의 최신 뉴스(기후, 전쟁, 정책 등)를 검색하여 {item}의 미래 시세를 분석하세요.
-                        2. **[미래 시나리오]** 섹션을 만들어 2026년 하반기까지의 단가 흐름을 월별 혹은 분기별로 예측하세요.
+                        2. **[미래 시나리오]** 섹션을 만들어 앞으로의 단가 흐름을 월별 혹은 분기별로 예측하세요.
                         3. 과거 데이터 요약은 최소화하고, '앞으로 일어날 일'과 그로 인한 '미래 가격 범위'를 예측값으로 제시하세요.
                         """, 
                         expected_output=f"{item}의 미래 단가 변동 시나리오 및 예측 시점 보고서", 
