@@ -30,6 +30,9 @@ url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vST3eDNhF1GLc231d4RdAnSCb
 def load_data():
     try:
         data = pd.read_csv(url)
+        # [핵심 수정] 특정 품목명을 가독성 좋게 변경
+        data['품목'] = data['품목'].replace('가수분해소고기농축물(호주)', '호주산 쇠고기 (가수분해농축물)')
+        
         data['날짜'] = pd.to_datetime(data['날짜'])
         return data.sort_values(['품목', '날짜'])
     except Exception as e:
@@ -103,27 +106,25 @@ if df_raw is not None:
         st.divider()
 
     # ============================================================================
-    # 4. 전문 AI 분석 섹션 (미래 예측 기능 대폭 강화)
+    # 4. 전문 AI 분석 섹션 (미래 예측 기능 유지)
     # ============================================================================
-    st.header("단가 예측 전문 보고서 (Gemini 2.5 Flash)")
+    st.header("🔮 미래 단가 예측 전문 보고서 (Gemini 2.5 Flash)")
     critical_items = get_critical_items(weekly_df, monthly_df, yearly_df)
     
-    # 오늘 날짜와 미래 예측 시점 계산
     today_str = datetime.date.today().strftime('%Y년 %m월 %d일')
     future_target = (datetime.date.today() + datetime.timedelta(days=120)).strftime('%Y년 %m월')
 
-    st.write(f"🔔 **AI 예측 대상:** {', '.join(critical_items)}")
+    st.write(f"🔔 **AI 미래 예측 대상:** {', '.join(critical_items)}")
     st.caption(f"※ {today_str} 기준 정보를 바탕으로 **{future_target}까지의 미래 시세**를 예측합니다.")
 
-    if st.button("단가 예측 시작"):
+    if st.button("🚀 미래 단가 예측 시작"):
         if not os.environ.get("GEMINI_API_KEY"):
             st.error("🚨 API 키가 설정되지 않았습니다.")
         else:
             search_tool = SerperDevTool()
             gemini_llm = LLM(model="gemini/gemini-2.5-flash", api_key=os.environ["GEMINI_API_KEY"])
 
-            with st.status("시장 분석 중...", expanded=True) as status:
-                # 에이전트의 페르소나에 '미래 예측' 임무 강조
+            with st.status("미래 시장 시나리오 분석 중...", expanded=True) as status:
                 analyst = Agent(
                     role="미래 시장 수급 예측가", 
                     goal=f"오늘({today_str}) 이후의 뉴스 및 기후 데이터를 분석하여 향후 3~6개월의 단가를 예측", 
@@ -142,29 +143,27 @@ if df_raw is not None:
                 progress_bar = st.progress(0)
                 
                 for idx, item in enumerate(critical_items):
-                    st.write(f" **{item}** 전망 분석 중... ({idx+1}/{len(critical_items)})")
+                    st.write(f"🔮 **{item}** 미래 전망 분석 중... ({idx+1}/{len(critical_items)})")
                     
-                    # 태스크 1: 미래 시점의 구체적 가격대 및 원인 예측
                     t1 = Task(
                         description=f"""
                         품목: {item}
                         현재 날짜: {today_str}
                         미션: 
                         1. 오늘 이후의 최신 뉴스(기후, 전쟁, 정책 등)를 검색하여 {item}의 미래 시세를 분석하세요.
-                        2. **[미래 시나리오]** 섹션을 만들어 앞으로의 단가 흐름을 월별 혹은 분기별로 예측하세요.
+                        2. **[미래 시나리오]** 섹션을 만들어 향후 단가 흐름을 월별 혹은 분기별로 예측하세요.
                         3. 과거 데이터 요약은 최소화하고, '앞으로 일어날 일'과 그로 인한 '미래 가격 범위'를 예측값으로 제시하세요.
                         """, 
                         expected_output=f"{item}의 미래 단가 변동 시나리오 및 예측 시점 보고서", 
                         agent=analyst
                     )
                     
-                    # 태스크 2: 미래 시점 대비 구매 전략
                     t2 = Task(
                         description=f"""
                         위의 {item} 미래 예측 결과를 바탕으로 구매 전략을 수립하세요.
-                        - **구매 적기**: [예: 2026년 6월 중순 이전 완료 추천]
-                        - **재고 전략**: 미래 가격 급등이 예상되면 현시점 선매수 비중을 얼마나 늘릴지 결정하세요.
-                        - **위기 알림**: 예측이 빗나갈 수 있는 변수(Black Swan)를 지정하세요.
+                        - **구매 적기**: 구체적인 미래 시점(예: 2026년 8월 등)을 제안하세요.
+                        - **재고 전략**: 미래 가격 변동폭에 따른 물량 확보 비중을 제안하세요.
+                        - **위기 알림**: 예측이 빗나갈 수 있는 변수를 지정하세요.
                         """, 
                         expected_output=f"{item}의 미래 대비 구매 실행 가이드", 
                         agent=procurement
